@@ -1,0 +1,6 @@
+{
+  "name": "RPG",
+  "description": "Aplicativo de rede social inspirada no Instagram com múltiplos perfis, Reels, Direct, Stories com reações, YouTube Music e Supabase.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
