@@ -1,21 +1,44 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Default fallback values or read from localStorage / process.env
-const SUPABASE_STORAGE_KEY_URL = 'instaconnect_supabase_url';
-const SUPABASE_STORAGE_KEY_ANON = 'instaconnect_supabase_anon_key';
+// Default Supabase project credentials provided
+export const DEFAULT_SUPABASE_URL = 'https://rxdhxykrvivhlmgeyjfy.supabase.co';
+export const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_2ztmJGIVzEkPnPpF54-miQ_o-SKZfr4';
+
+const SUPABASE_STORAGE_KEY_URL = 'rpg_supabase_url';
+const SUPABASE_STORAGE_KEY_ANON = 'rpg_supabase_anon_key';
 
 export function getStoredSupabaseCredentials() {
-  const url = localStorage.getItem(SUPABASE_STORAGE_KEY_URL) || (import.meta as any).env?.VITE_SUPABASE_URL || '';
-  const anonKey = localStorage.getItem(SUPABASE_STORAGE_KEY_ANON) || (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
+  const storedUrl = localStorage.getItem(SUPABASE_STORAGE_KEY_URL) || localStorage.getItem('instaconnect_supabase_url');
+  const storedAnon = localStorage.getItem(SUPABASE_STORAGE_KEY_ANON) || localStorage.getItem('instaconnect_supabase_anon_key');
+
+  const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL;
+  const envAnon = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
+
+  const url = (storedUrl && storedUrl.trim().length > 0)
+    ? storedUrl.trim()
+    : ((envUrl && envUrl.trim().length > 0) ? envUrl.trim() : DEFAULT_SUPABASE_URL);
+
+  const anonKey = (storedAnon && storedAnon.trim().length > 0)
+    ? storedAnon.trim()
+    : ((envAnon && envAnon.trim().length > 0) ? envAnon.trim() : DEFAULT_SUPABASE_ANON_KEY);
+
   return { url, anonKey };
 }
 
 export function saveSupabaseCredentials(url: string, anonKey: string) {
-  if (url) localStorage.setItem(SUPABASE_STORAGE_KEY_URL, url);
-  else localStorage.removeItem(SUPABASE_STORAGE_KEY_URL);
+  if (url) {
+    localStorage.setItem(SUPABASE_STORAGE_KEY_URL, url);
+  } else {
+    localStorage.removeItem(SUPABASE_STORAGE_KEY_URL);
+    localStorage.removeItem('instaconnect_supabase_url');
+  }
 
-  if (anonKey) localStorage.setItem(SUPABASE_STORAGE_KEY_ANON, anonKey);
-  else localStorage.removeItem(SUPABASE_STORAGE_KEY_ANON);
+  if (anonKey) {
+    localStorage.setItem(SUPABASE_STORAGE_KEY_ANON, anonKey);
+  } else {
+    localStorage.removeItem(SUPABASE_STORAGE_KEY_ANON);
+    localStorage.removeItem('instaconnect_supabase_anon_key');
+  }
 }
 
 let cachedClient: SupabaseClient | null = null;
@@ -44,13 +67,53 @@ export function resetSupabaseClient() {
   cachedClient = null;
 }
 
+export async function testSupabaseConnection(): Promise<{ success: boolean; message: string; tablesExist?: boolean }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { success: false, message: 'URL ou chave do Supabase não configurada.' };
+  }
+
+  try {
+    const { error } = await client.from('profiles').select('id').limit(1);
+    if (error) {
+      // 42P01: relation/table does not exist in Postgres yet
+      // PGRST205: PostgREST could not find table in schema cache
+      if (error.code === '42P01' || error.code === 'PGRST205') {
+        return {
+          success: true,
+          tablesExist: false,
+          message: 'Conectado com sucesso ao Supabase! Porém, as tabelas ainda não foram criadas no banco de dados.'
+        };
+      }
+      return {
+        success: false,
+        tablesExist: false,
+        message: `Erro na resposta do Supabase: ${error.message}`
+      };
+    }
+    return {
+      success: true,
+      tablesExist: true,
+      message: 'Conexão ativa com o Supabase e tabelas prontas!'
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Erro ao conectar: ${err?.message || 'Falha de rede'}`
+    };
+  }
+}
+
 // SQL Schema Generator string for Supabase database setup
-export const SUPABASE_SQL_SCHEMA = `-- SCHEMA COMPLETO PARA INSTACONNECT NO SUPABASE
+export const SUPABASE_SQL_SCHEMA = `-- ========================================================
+-- SCHEMA COMPLETO PARA O APLICATIVO RPG NO SUPABASE
+-- Cole este script no SQL Editor do seu projeto Supabase e clique em RUN
+-- ========================================================
 
 -- 1. Tabela de Perfis
 create table if not exists public.profiles (
   id uuid default gen_random_uuid() primary key,
-  user_id uuid references auth.users(id) on delete cascade,
+  user_id uuid,
   username text unique not null,
   full_name text not null,
   avatar_url text,
@@ -86,7 +149,7 @@ create table if not exists public.posts (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 4. Tabela de Stories
+-- 4. Tabela de Stories (expiram em 24h)
 create table if not exists public.stories (
   id uuid default gen_random_uuid() primary key,
   profile_id uuid references public.profiles(id) on delete cascade,
@@ -163,6 +226,47 @@ create table if not exists public.notifications (
   is_read boolean default false,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- Configuração de Políticas de Segurança (Row Level Security) permissivas para uso do app
+alter table public.profiles enable row level security;
+drop policy if exists "Acesso público profiles" on public.profiles;
+create policy "Acesso público profiles" on public.profiles for all using (true) with check (true);
+
+alter table public.followers enable row level security;
+drop policy if exists "Acesso público followers" on public.followers;
+create policy "Acesso público followers" on public.followers for all using (true) with check (true);
+
+alter table public.posts enable row level security;
+drop policy if exists "Acesso público posts" on public.posts;
+create policy "Acesso público posts" on public.posts for all using (true) with check (true);
+
+alter table public.stories enable row level security;
+drop policy if exists "Acesso público stories" on public.stories;
+create policy "Acesso público stories" on public.stories for all using (true) with check (true);
+
+alter table public.story_reactions enable row level security;
+drop policy if exists "Acesso público story_reactions" on public.story_reactions;
+create policy "Acesso público story_reactions" on public.story_reactions for all using (true) with check (true);
+
+alter table public.reels enable row level security;
+drop policy if exists "Acesso público reels" on public.reels;
+create policy "Acesso público reels" on public.reels for all using (true) with check (true);
+
+alter table public.chats enable row level security;
+drop policy if exists "Acesso público chats" on public.chats;
+create policy "Acesso público chats" on public.chats for all using (true) with check (true);
+
+alter table public.chat_participants enable row level security;
+drop policy if exists "Acesso público chat_participants" on public.chat_participants;
+create policy "Acesso público chat_participants" on public.chat_participants for all using (true) with check (true);
+
+alter table public.messages enable row level security;
+drop policy if exists "Acesso público messages" on public.messages;
+create policy "Acesso público messages" on public.messages for all using (true) with check (true);
+
+alter table public.notifications enable row level security;
+drop policy if exists "Acesso público notifications" on public.notifications;
+create policy "Acesso público notifications" on public.notifications for all using (true) with check (true);
 
 -- Habilitar Supabase Realtime nas tabelas principais
 alter publication supabase_realtime add table public.messages;

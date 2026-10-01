@@ -1,7 +1,26 @@
 import React, { useState, useRef } from 'react';
-import { Sparkles, UserPlus, Image, Globe, Briefcase, User, Rocket, Building, Check, Upload, Camera } from 'lucide-react';
+import { 
+  Sparkles, 
+  UserPlus, 
+  Briefcase, 
+  User, 
+  Rocket, 
+  Building, 
+  Check, 
+  Upload, 
+  Camera, 
+  ShieldCheck, 
+  LogOut,
+  ChevronRight
+} from 'lucide-react';
 import { ProfileType } from '../types';
 import { store } from '../services/store';
+import { 
+  GoogleUser, 
+  deriveProfileFromGoogle,
+  clearStoredGoogleUser 
+} from '../services/googleAuth';
+import { GoogleLogo } from './GoogleSignInModal';
 
 const AVATAR_PRESETS = [
   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80',
@@ -13,16 +32,26 @@ const AVATAR_PRESETS = [
 ];
 
 interface OnboardingProfileViewProps {
+  googleUser: GoogleUser;
   onCreated: () => void;
+  onLogout?: () => void;
 }
 
-export const OnboardingProfileView: React.FC<OnboardingProfileViewProps> = ({ onCreated }) => {
-  const [fullName, setFullName] = useState('');
-  const [username, setUsername] = useState('');
-  const [avatarUrl, setAvatarUrl] = useState(AVATAR_PRESETS[0]);
-  const [bio, setBio] = useState('');
+export const OnboardingProfileView: React.FC<OnboardingProfileViewProps> = ({ 
+  googleUser, 
+  onCreated,
+  onLogout 
+}) => {
+  const derived = deriveProfileFromGoogle(googleUser);
+
+  // Form Fields pre-filled with Google account data
+  const [fullName, setFullName] = useState(derived.fullName || 'João');
+  const [username, setUsername] = useState(derived.username || 'joao');
+  const [avatarUrl, setAvatarUrl] = useState(derived.avatarUrl || AVATAR_PRESETS[0]);
+  const [bio, setBio] = useState('Bem-vindo ao meu perfil no RPG!');
   const [website, setWebsite] = useState('');
   const [profileType, setProfileType] = useState<ProfileType>('pessoal');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -39,177 +68,195 @@ export const OnboardingProfileView: React.FC<OnboardingProfileViewProps> = ({ on
     }
   };
 
+  const handleLogout = () => {
+    clearStoredGoogleUser();
+    if (onLogout) onLogout();
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName.trim() || !username.trim()) return;
+    setErrorMsg(null);
+
+    const cleanUsername = username.trim().toLowerCase().replace(/[^a-z0-9._]/g, '');
+    if (!cleanUsername) {
+      setErrorMsg('Por favor, informe um nome de usuário válido (@username).');
+      return;
+    }
+    if (!fullName.trim()) {
+      setErrorMsg('Por favor, informe seu nome de exibição.');
+      return;
+    }
 
     store.createProfile({
       full_name: fullName.trim(),
-      username: username.trim(),
-      avatar_url: avatarUrl.trim() || AVATAR_PRESETS[0],
+      username: cleanUsername,
+      avatar_url: avatarUrl,
       bio: bio.trim(),
       website: website.trim(),
       profile_type: profileType,
+      google_email: googleUser.email,
+      google_name: googleUser.name
     });
 
     onCreated();
   };
 
   return (
-    <div className="min-h-screen bg-neutral-950 flex items-center justify-center p-4 sm:p-6 text-white font-sans">
-      <div className="max-w-lg w-full bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
-        {/* Decorative Top Gradient Glow */}
-        <div className="absolute -top-24 -left-24 w-48 h-48 bg-rose-500/20 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-purple-500/20 rounded-full blur-3xl pointer-events-none" />
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center p-4 sm:p-6 selection:bg-rose-500 selection:text-white">
+      {/* Background radial highlight */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden flex items-center justify-center">
+        <div className="w-[600px] h-[600px] bg-rose-600/10 rounded-full blur-[140px]" />
+      </div>
 
-        {/* Header */}
-        <div className="text-center mb-8 relative z-10">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white font-bold shadow-lg shadow-rose-500/25 mb-4">
-            <Sparkles className="w-8 h-8" />
+      <div className="max-w-xl w-full bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative z-10 my-8">
+        
+        {/* Master Google Account Banner */}
+        <div className="bg-neutral-800/80 border border-neutral-700/80 rounded-2xl p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              {googleUser.picture ? (
+                <img 
+                  src={googleUser.picture} 
+                  alt={googleUser.name} 
+                  className="w-10 h-10 rounded-full object-cover border border-neutral-600 shadow" 
+                />
+              ) : (
+                <div className="w-10 h-10 rounded-full bg-neutral-700 flex items-center justify-center">
+                  <User className="w-5 h-5 text-neutral-300" />
+                </div>
+              )}
+              <div className="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5 shadow">
+                <GoogleLogo />
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold text-white flex items-center gap-1.5">
+                <span>{googleUser.name}</span>
+                <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-700/50 text-emerald-400 font-medium">
+                  <ShieldCheck className="w-3 h-3" /> Conta Google Conectada
+                </span>
+              </div>
+              <div className="text-xs text-neutral-400 font-mono">
+                {googleUser.email}
+              </div>
+            </div>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-            Bem-vindo ao InstaConnect
-          </h1>
-          <p className="text-xs sm:text-sm text-neutral-400 mt-2 max-w-sm mx-auto leading-relaxed">
-            Nenhum perfil encontrado. Crie o seu primeiro perfil para publicar, compartilhar stories, reels e conversar.
+
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="self-end sm:self-center inline-flex items-center gap-1 text-xs text-neutral-400 hover:text-red-400 transition-colors py-1 px-2.5 rounded-lg hover:bg-neutral-700/50"
+            title="Trocar conta Google"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Trocar conta</span>
+          </button>
+        </div>
+
+        {/* Heading */}
+        <div className="text-left mb-6">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-semibold mb-2">
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Crie seu Primeiro Perfil</span>
+          </div>
+          <h2 className="text-2xl font-bold tracking-tight text-white">
+            Configure seu perfil no RPG
+          </h2>
+          <p className="text-sm text-neutral-400 mt-1">
+            Com esta conta Google, você pode criar quantos perfis quiser depois (pessoal, RPG, trabalho) sem precisar fazer login novamente.
           </p>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-5 relative z-10">
+        {errorMsg && (
+          <div className="mb-4 p-3 rounded-xl bg-red-950/60 border border-red-800 text-red-300 text-xs">
+            {errorMsg}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-6">
           {/* Avatar Selection */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-neutral-300 mb-2">
+            <label className="block text-xs font-semibold text-neutral-300 mb-2">
               Foto de Perfil
             </label>
-
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept="image/*"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-
-            <div className="flex flex-col sm:flex-row items-center gap-4 mb-3">
-              <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+            <div className="flex items-center gap-4">
+              <div className="relative group shrink-0">
                 <img
                   src={avatarUrl}
-                  alt="Avatar Prévia"
-                  className="w-20 h-20 rounded-full object-cover border-2 border-rose-500 shadow-xl"
+                  alt="Preview"
+                  className="w-20 h-20 rounded-full object-cover ring-2 ring-rose-500/40 border-2 border-neutral-900 shadow-md"
                 />
-                <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Camera className="w-6 h-6 text-white" />
-                </div>
-              </div>
-
-              <div className="flex-1 space-y-2 text-center sm:text-left w-full">
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="px-4 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/40 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
+                  className="absolute inset-0 bg-black/60 rounded-full opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white"
+                  title="Fazer upload de foto"
                 >
-                  <Upload className="w-4 h-4" />
-                  <span>Escolher Foto do Celular</span>
+                  <Camera className="w-5 h-5" />
                 </button>
-                <p className="text-[10px] text-neutral-400">
-                  Ou insira a URL / escolha um avatar abaixo:
-                </p>
+              </div>
+
+              <div className="flex-1">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                <div className="flex flex-wrap gap-2 items-center mb-2">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-200 px-3 py-1.5 rounded-lg border border-neutral-700 transition-colors"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    Enviar do dispositivo
+                  </button>
+
+                  {googleUser.picture && (
+                    <button
+                      type="button"
+                      onClick={() => setAvatarUrl(googleUser.picture!)}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-200 px-3 py-1.5 rounded-lg border border-neutral-700 transition-colors"
+                    >
+                      <GoogleLogo />
+                      Usar foto Google
+                    </button>
+                  )}
+                </div>
+
+                {/* Preset Avatars */}
+                <div className="flex items-center gap-1.5 overflow-x-auto py-1">
+                  {AVATAR_PRESETS.map((preset, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setAvatarUrl(preset)}
+                      className={`relative rounded-full transition-transform shrink-0 ${
+                        avatarUrl === preset ? 'ring-2 ring-rose-500 scale-105' : 'opacity-70 hover:opacity-100'
+                      }`}
+                    >
+                      <img src={preset} className="w-7 h-7 rounded-full object-cover" alt="preset" />
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-
-            {/* Presets */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {AVATAR_PRESETS.map((preset, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => setAvatarUrl(preset)}
-                  className={`relative rounded-full overflow-hidden flex-shrink-0 transition-transform ${
-                    avatarUrl === preset ? 'ring-2 ring-rose-500 scale-105' : 'opacity-70 hover:opacity-100'
-                  }`}
-                >
-                  <img src={preset} alt="" className="w-9 h-9 object-cover" />
-                  {avatarUrl === preset && (
-                    <div className="absolute inset-0 bg-rose-500/30 flex items-center justify-center">
-                      <Check className="w-4 h-4 text-white" />
-                    </div>
-                  )}
-                </button>
-              ))}
-            </div>
           </div>
 
-          {/* Full Name & Username */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-neutral-300 mb-1">
-                Nome Completo *
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="Ex: Ana Maria"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-700 bg-neutral-800 text-xs text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-rose-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-neutral-300 mb-1">
-                Nome de Usuário (@) *
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="anamaria"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-700 bg-neutral-800 text-xs text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-rose-500"
-              />
-            </div>
-          </div>
-
-          {/* Bio */}
+          {/* Profile Type Selector */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-neutral-300 mb-1">
-              Biografia / Apresentação
+            <label className="block text-xs font-semibold text-neutral-300 mb-2">
+              Tipo de Perfil Inicial
             </label>
-            <textarea
-              rows={2}
-              placeholder="Escreva algo sobre você..."
-              value={bio}
-              onChange={(e) => setBio(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-700 bg-neutral-800 text-xs text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-rose-500"
-            />
-          </div>
-
-          {/* Website */}
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-neutral-300 mb-1">
-              Link ou Website (Opcional)
-            </label>
-            <input
-              type="url"
-              placeholder="https://meusite.com"
-              value={website}
-              onChange={(e) => setWebsite(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-700 bg-neutral-800 text-xs text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-rose-500"
-            />
-          </div>
-
-          {/* Profile Type */}
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-neutral-300 mb-2">
-              Tipo do Perfil
-            </label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {[
-                { type: 'pessoal', label: 'Pessoal', icon: User },
-                { type: 'profissional', label: 'Profissional', icon: Briefcase },
-                { type: 'criador', label: 'Criador', icon: Rocket },
-                { type: 'empresa', label: 'Empresa', icon: Building },
+                { type: 'pessoal', label: 'Pessoal', icon: User, desc: 'Amigos & Fotos' },
+                { type: 'criador', label: 'Criador', icon: Sparkles, desc: 'Vídeos & Curtas' },
+                { type: 'profissional', label: 'RPG / Gamer', icon: Rocket, desc: 'Comunidades' },
+                { type: 'empresa', label: 'Negócios', icon: Building, desc: 'Empresa & Vendas' },
               ].map((item) => {
                 const Icon = item.icon;
                 const isSelected = profileType === item.type;
@@ -218,28 +265,79 @@ export const OnboardingProfileView: React.FC<OnboardingProfileViewProps> = ({ on
                     key={item.type}
                     type="button"
                     onClick={() => setProfileType(item.type as ProfileType)}
-                    className={`flex items-center gap-2 p-3 rounded-xl border text-xs font-bold transition-all ${
+                    className={`flex flex-col items-center p-3 rounded-2xl border text-center transition-all ${
                       isSelected
-                        ? 'border-rose-500 bg-rose-500/10 text-rose-400'
-                        : 'border-neutral-800 bg-neutral-800/60 text-neutral-400 hover:text-white'
+                        ? 'border-rose-500 bg-rose-500/10 text-white ring-1 ring-rose-500'
+                        : 'border-neutral-800 bg-neutral-800/40 text-neutral-400 hover:border-neutral-700 hover:bg-neutral-800'
                     }`}
                   >
-                    <Icon className="w-4 h-4" />
-                    <span>{item.label}</span>
+                    <Icon className={`w-5 h-5 mb-1.5 ${isSelected ? 'text-rose-400' : 'text-neutral-500'}`} />
+                    <span className="text-xs font-bold text-neutral-200">{item.label}</span>
+                    <span className="text-[10px] text-neutral-400 mt-0.5">{item.desc}</span>
                   </button>
                 );
               })}
             </div>
           </div>
 
+          {/* Name & Username Inputs */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                Nome Completo / Exibição *
+              </label>
+              <input
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Ex: João Silva ou Cavaleiro Negro"
+                required
+                className="w-full px-3.5 py-2.5 bg-neutral-800/80 border border-neutral-700 rounded-xl text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                Nome de Usuário (@username) *
+              </label>
+              <div className="relative">
+                <span className="absolute left-3.5 top-2.5 text-neutral-500 text-sm font-semibold select-none">
+                  @
+                </span>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9._]/g, ''))}
+                  placeholder="usuario"
+                  required
+                  className="w-full pl-8 pr-3.5 py-2.5 bg-neutral-800/80 border border-neutral-700 rounded-xl text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 font-mono"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Bio */}
+          <div>
+            <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+              Biografia
+            </label>
+            <textarea
+              value={bio}
+              onChange={(e) => setBio(e.target.value)}
+              rows={2}
+              placeholder="Escreva algo sobre você ou seu personagem..."
+              className="w-full px-3.5 py-2.5 bg-neutral-800/80 border border-neutral-700 rounded-xl text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 resize-none"
+            />
+          </div>
+
           {/* Submit */}
           <button
             type="submit"
-            disabled={!fullName.trim() || !username.trim()}
-            className="w-full py-3.5 rounded-xl bg-gradient-to-r from-rose-500 via-purple-600 to-indigo-600 text-white font-extrabold text-sm shadow-xl shadow-rose-500/20 hover:opacity-95 disabled:opacity-40 transition-all flex items-center justify-center gap-2 mt-4"
+            className="w-full flex items-center justify-center gap-2 py-3 px-6 bg-gradient-to-r from-rose-600 via-rose-500 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-bold rounded-2xl shadow-xl shadow-rose-600/20 transition-all hover:scale-[1.01] active:scale-[0.99]"
           >
             <UserPlus className="w-5 h-5" />
             <span>Criar Meu Perfil e Entrar</span>
+            <ChevronRight className="w-4 h-4 ml-1" />
           </button>
         </form>
       </div>

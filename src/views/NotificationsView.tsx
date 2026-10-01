@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  Bell, Heart, MessageCircle, UserPlus, Flame, Mail, CheckCheck, Trash2
+  Bell, Heart, MessageCircle, UserPlus, Flame, Mail, CheckCheck, Trash2, Repeat2, AtSign
 } from 'lucide-react';
 import { AppNotification, NotificationType } from '../types';
 import { store } from '../services/store';
@@ -41,6 +41,18 @@ export const NotificationsView: React.FC<Props> = ({ onOpenProfile }) => {
         return (
           <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-950/60 text-blue-500 flex items-center justify-center flex-shrink-0">
             <MessageCircle className="w-4 h-4" />
+          </div>
+        );
+      case 'mention':
+        return (
+          <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-950/60 text-violet-500 flex items-center justify-center flex-shrink-0">
+            <AtSign className="w-4 h-4 stroke-[2.5]" />
+          </div>
+        );
+      case 'repost':
+        return (
+          <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-500 flex items-center justify-center flex-shrink-0">
+            <Repeat2 className="w-4 h-4 stroke-[2.5]" />
           </div>
         );
       case 'follow':
@@ -120,6 +132,8 @@ export const NotificationsView: React.FC<Props> = ({ onOpenProfile }) => {
       <div className="flex items-center gap-1.5 overflow-x-auto pb-3 mb-4 no-scrollbar">
         {[
           { id: 'all', label: 'Todas' },
+          { id: 'mention', label: 'Menções @' },
+          { id: 'repost', label: 'Republicações 🔁' },
           { id: 'like', label: 'Curtidas ❤️' },
           { id: 'comment', label: 'Comentários 💬' },
           { id: 'follow', label: 'Seguidores 👤' },

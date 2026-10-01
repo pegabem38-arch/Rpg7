@@ -1,8 +1,10 @@
 import React, { useState, useRef } from 'react';
-import { X, Image, Film, Sparkles, Music, Youtube, MapPin, Check, Upload } from 'lucide-react';
-import { YoutubeTrack } from '../types';
-import { YOUTUBE_PRESET_TRACKS } from '../services/mockData';
+import { X, Image, Film, Sparkles, Music, Youtube, MapPin, Check, Upload, AtSign, Ban } from 'lucide-react';
+import { YoutubeTrack, Profile } from '../types';
 import { store } from '../services/store';
+import { YouTubeMusicPicker } from './YouTubeMusicPicker';
+import { MentionInputSuggestions } from './MentionInputSuggestions';
+import { compressImage, convertToPermanentDataUrl } from '../utils/imageCompressor';
 
 interface Props {
   isOpen: boolean;
@@ -11,84 +13,108 @@ interface Props {
 }
 
 export const CreateModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
+  const isBanned = store.isProfileBanned();
   const [contentType, setContentType] = useState<'post' | 'story' | 'reel'>('post');
   const [mediaUrl, setMediaUrl] = useState('');
   const [mediaFileName, setMediaFileName] = useState('');
+  const [isConverting, setIsConverting] = useState(false);
   const [caption, setCaption] = useState('');
   const [location, setLocation] = useState('');
-  const [selectedYoutubeTrack, setSelectedYoutubeTrack] = useState<YoutubeTrack | undefined>(
-    YOUTUBE_PRESET_TRACKS[0]
-  );
-  const [customYoutubeUrl, setCustomYoutubeUrl] = useState('');
+  const [selectedYoutubeTrack, setSelectedYoutubeTrack] = useState<YoutubeTrack | undefined>(undefined);
   const [startTimeSeconds, setStartTimeSeconds] = useState(30);
+  const [durationSeconds, setDurationSeconds] = useState(30);
+  const [mentionSuggestions, setMentionSuggestions] = useState<Profile[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const captionInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   if (!isOpen) return null;
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  if (isBanned) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-white dark:bg-neutral-900 rounded-3xl max-w-sm w-full p-6 text-center border border-red-500/40 shadow-2xl space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-red-100 dark:bg-red-950 text-red-600 flex items-center justify-center mx-auto shadow-md">
+            <Ban className="w-7 h-7" />
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-neutral-900 dark:text-white">
+              Conta Suspensa
+            </h3>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+              Esta conta foi banida pelo Administrador geral. Novas publicações, stories e curtas estão bloqueados.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-full py-2.5 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 font-bold text-xs"
+          >
+            Fechar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Aplica exatamente a mesma lógica e conversão da foto de perfil:
+  // Converte o arquivo bruto da câmera ou galeria do celular diretamente para Base64 Data URL permanente
+  // via FileReader antes de salvar no estado e no banco de dados Supabase SQL.
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setMediaFileName(file.name);
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setMediaUrl(event.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
+      setIsConverting(true);
+
+      try {
+        const converted = await convertToPermanentDataUrl(file);
+        setMediaUrl(converted);
+      } catch (err) {
+        console.error('Erro na leitura/conversão do arquivo de imagem:', err);
+      } finally {
+        setIsConverting(false);
+      }
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isConverting) return;
     if (!mediaUrl.trim()) return;
 
-    let trackToAttach = selectedYoutubeTrack;
+    setIsConverting(true);
+    const permanentMediaUrl = await convertToPermanentDataUrl(mediaUrl);
 
-    // Handle custom YouTube input if typed
-    if (customYoutubeUrl.trim()) {
-      let ytId = customYoutubeUrl.trim();
-      if (customYoutubeUrl.includes('v=')) {
-        ytId = customYoutubeUrl.split('v=')[1].split('&')[0];
-      } else if (customYoutubeUrl.includes('youtu.be/')) {
-        ytId = customYoutubeUrl.split('youtu.be/')[1].split('?')[0];
-      }
-
-      trackToAttach = {
-        id: `custom-yt-${Date.now()}`,
-        title: 'Música do YouTube',
-        artist: 'YouTube Audio',
-        youtube_url: customYoutubeUrl.trim(),
-        youtube_id: ytId,
-        start_time_seconds: startTimeSeconds
-      };
-    } else if (trackToAttach) {
-      trackToAttach = { ...trackToAttach, start_time_seconds: startTimeSeconds };
-    }
+    const trackToAttach = selectedYoutubeTrack
+      ? { 
+          ...selectedYoutubeTrack, 
+          start_time_seconds: startTimeSeconds,
+          duration_seconds: durationSeconds 
+        }
+      : undefined;
 
     if (contentType === 'post') {
-      store.createPost({
-        media_url: mediaUrl,
+      await store.createPost({
+        media_url: permanentMediaUrl,
         media_type: 'image',
         caption,
         location,
         youtube_track: trackToAttach
       });
     } else if (contentType === 'story') {
-      store.createStory({
-        media_url: mediaUrl,
+      await store.createStory({
+        media_url: permanentMediaUrl,
         media_type: 'image',
         youtube_track: trackToAttach
       });
     } else if (contentType === 'reel') {
-      store.createReel({
-        video_url: mediaUrl,
+      await store.createReel({
+        video_url: permanentMediaUrl,
         caption,
         youtube_track: trackToAttach
       });
     }
 
+    setIsConverting(false);
     onSuccess();
     onClose();
   };
@@ -154,7 +180,7 @@ export const CreateModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => 
                 : 'text-neutral-600 dark:text-neutral-400'
             }`}
           >
-            <Film className="w-4 h-4" /> Reels
+            <Film className="w-4 h-4" /> Curtas
           </button>
         </div>
 
@@ -174,10 +200,20 @@ export const CreateModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => 
             />
 
             <div
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => !isConverting && fileInputRef.current?.click()}
               className="border-2 border-dashed border-rose-500/50 hover:border-rose-500 bg-rose-50/30 dark:bg-rose-950/20 rounded-2xl p-5 text-center cursor-pointer transition-all hover:scale-[1.01]"
             >
-              {mediaUrl ? (
+              {isConverting ? (
+                <div className="flex flex-col items-center justify-center gap-2.5 py-6">
+                  <div className="w-8 h-8 border-3 border-rose-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="font-extrabold text-xs text-rose-500">
+                    Convertendo arquivo do celular (Base64)...
+                  </span>
+                  <span className="text-[11px] text-neutral-400">
+                    Processando via FileReader igual à foto de perfil
+                  </span>
+                </div>
+              ) : mediaUrl ? (
                 <div className="space-y-2">
                   {contentType === 'reel' || mediaUrl.startsWith('data:video') ? (
                     <video
@@ -192,9 +228,11 @@ export const CreateModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => 
                       className="max-h-48 w-auto mx-auto rounded-xl object-cover shadow-md"
                     />
                   )}
-                  <p className="text-xs text-rose-500 font-bold truncate">
-                    {mediaFileName || 'Arquivo selecionado'} (Clique para trocar)
+                  <p className="text-xs text-emerald-600 dark:text-emerald-400 font-bold truncate flex items-center justify-center gap-1">
+                    <Check className="w-3.5 h-3.5 shrink-0" />
+                    <span>{mediaFileName || 'Arquivo selecionado'} (Convertido com sucesso)</span>
                   </p>
+                  <p className="text-[10px] text-neutral-400">Clique para selecionar outro arquivo do celular</p>
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center gap-2 text-neutral-600 dark:text-neutral-300">
@@ -231,16 +269,62 @@ export const CreateModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => 
           {/* Caption (For Post & Reel) */}
           {contentType !== 'story' && (
             <div>
-              <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
-                Legenda / Descrição
-              </label>
-              <textarea
-                rows={3}
-                placeholder="Escreva uma legenda incrível..."
-                value={caption}
-                onChange={(e) => setCaption(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white text-xs focus:ring-2 focus:ring-rose-500 outline-none"
-              />
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+                  Legenda / Descrição
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = caption ? `${caption} @` : '@';
+                    setCaption(next);
+                    setMentionSuggestions(store.searchProfilesForMention(''));
+                    if (captionInputRef.current) captionInputRef.current.focus();
+                  }}
+                  className="text-xs text-rose-500 hover:text-rose-600 font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <AtSign className="w-3 h-3" />
+                  <span>Marcar amigo</span>
+                </button>
+              </div>
+
+              <div className="relative">
+                <textarea
+                  ref={captionInputRef}
+                  rows={3}
+                  placeholder="Escreva uma legenda incrível... Use @nome para marcar pessoas!"
+                  value={caption}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCaption(val);
+                    const words = val.split(/\s+/);
+                    const lastWord = words[words.length - 1];
+                    if (lastWord.startsWith('@')) {
+                      const q = lastWord.substring(1);
+                      setMentionSuggestions(store.searchProfilesForMention(q));
+                    } else {
+                      setMentionSuggestions([]);
+                    }
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white text-xs focus:ring-2 focus:ring-rose-500 outline-none"
+                />
+
+                {mentionSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-1 z-30">
+                    <MentionInputSuggestions
+                      suggestions={mentionSuggestions}
+                      onSelect={(profile) => {
+                        const words = caption.split(/\s+/);
+                        words.pop();
+                        words.push(`@${profile.username} `);
+                        setCaption(words.join(' '));
+                        setMentionSuggestions([]);
+                        if (captionInputRef.current) captionInputRef.current.focus();
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -260,86 +344,15 @@ export const CreateModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => 
             </div>
           )}
 
-          {/* YouTube Music Integration Section */}
-          <div className="p-3 bg-neutral-50 dark:bg-neutral-800/60 rounded-xl border border-neutral-200 dark:border-neutral-700">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-neutral-900 dark:text-white flex items-center gap-1.5">
-                <Youtube className="w-4 h-4 text-red-500" /> Adicionar Música do YouTube
-              </span>
-              {selectedYoutubeTrack && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedYoutubeTrack(undefined)}
-                  className="text-[10px] text-neutral-400 hover:text-rose-500"
-                >
-                  Remover
-                </button>
-              )}
-            </div>
-
-            {/* YouTube Track Presets */}
-            <div className="space-y-1.5 max-h-36 overflow-y-auto mb-3 pr-1">
-              {YOUTUBE_PRESET_TRACKS.map((track) => {
-                const isSelected = selectedYoutubeTrack?.id === track.id && !customYoutubeUrl;
-
-                return (
-                  <button
-                    key={track.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedYoutubeTrack(track);
-                      setCustomYoutubeUrl('');
-                    }}
-                    className={`w-full flex items-center justify-between p-2 rounded-lg text-left text-xs transition-colors ${
-                      isSelected
-                        ? 'bg-rose-500 text-white font-bold'
-                        : 'bg-white dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <Music className="w-3.5 h-3.5 flex-shrink-0" />
-                      <div className="truncate">
-                        <span className="block truncate leading-tight">{track.title}</span>
-                        <span className={`text-[10px] ${isSelected ? 'text-white/80' : 'text-neutral-400'}`}>
-                          {track.artist}
-                        </span>
-                      </div>
-                    </div>
-                    {isSelected && <Check className="w-4 h-4 flex-shrink-0" />}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Custom YouTube URL & Timestamp Start */}
-            <div className="space-y-2 pt-2 border-t border-neutral-200 dark:border-neutral-700">
-              <input
-                type="url"
-                placeholder="Ou cole o link do YouTube (ex: https://youtube.com/watch?v=...)"
-                value={customYoutubeUrl}
-                onChange={(e) => {
-                  setCustomYoutubeUrl(e.target.value);
-                  if (e.target.value) setSelectedYoutubeTrack(undefined);
-                }}
-                className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white text-[11px] focus:ring-1 focus:ring-red-500 outline-none"
-              />
-
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-neutral-600 dark:text-neutral-400">Minuto de início (segundos):</span>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="number"
-                    min={0}
-                    max={600}
-                    value={startTimeSeconds}
-                    onChange={(e) => setStartTimeSeconds(Number(e.target.value))}
-                    className="w-16 px-2 py-1 rounded bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 text-center text-xs text-neutral-900 dark:text-white font-bold"
-                  />
-                  <span className="text-[10px] text-neutral-400">s</span>
-                </div>
-              </div>
-            </div>
-          </div>
+          {/* YouTube Music Live Search & Snippet Picker */}
+          <YouTubeMusicPicker
+            selectedTrack={selectedYoutubeTrack}
+            onSelectTrack={setSelectedYoutubeTrack}
+            startTimeSeconds={startTimeSeconds}
+            onStartTimeChange={setStartTimeSeconds}
+            durationSeconds={durationSeconds}
+            onDurationChange={setDurationSeconds}
+          />
 
           <div className="flex items-center gap-3 pt-2">
             <button
@@ -351,10 +364,17 @@ export const CreateModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => 
             </button>
             <button
               type="submit"
-              disabled={!mediaUrl}
-              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-purple-600 text-white font-semibold text-xs shadow-md hover:opacity-95 disabled:opacity-40 transition-opacity"
+              disabled={!mediaUrl || isConverting}
+              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-purple-600 text-white font-semibold text-xs shadow-md hover:opacity-95 disabled:opacity-40 transition-opacity flex items-center justify-center gap-1.5"
             >
-              Publicar Agora
+              {isConverting ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Convertendo imagem...</span>
+                </>
+              ) : (
+                <span>Publicar Agora</span>
+              )}
             </button>
           </div>
         </form>

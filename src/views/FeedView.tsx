@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { Plus, Sparkles, UserPlus, UserCheck, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Plus, Sparkles, UserPlus, UserCheck, RefreshCw, Loader2, Image as ImageIcon } from 'lucide-react';
 import { Profile, Story, Post } from '../types';
 import { store } from '../services/store';
 import { FeedPost } from '../components/FeedPost';
 import { StoryViewerModal } from '../components/StoryViewerModal';
+import { CachedImage } from '../components/CachedImage';
 
 interface Props {
   onOpenProfile: (profileId: string) => void;
@@ -16,31 +17,91 @@ export const FeedView: React.FC<Props> = ({
   onOpenCreateModal,
   onOpenAccountSwitcher
 }) => {
-  const posts = store.getPosts();
-  const stories = store.getStories();
-  const activeProfile = store.getActiveProfile();
-  const allProfiles = store.getProfiles();
+  const [, setTick] = useState(0);
+
+  // 2. PROCESSAMENTO ASSÍNCRONO:
+  // Controla o estado de espera da resposta inicial do banco de dados SQL
+  const [isWaitingSql, setIsWaitingSql] = useState<boolean>(!store.isSqlReady());
+
+  useEffect(() => {
+    const unsubscribe = store.subscribe(() => {
+      setTick((t) => t + 1);
+      if (store.isSqlReady()) {
+        setIsWaitingSql(false);
+      }
+    });
+
+    let isMounted = true;
+
+    // Se o banco de dados SQL ainda estiver em processo de consulta, aguarda a resposta
+    if (!store.isSqlReady()) {
+      store
+        .waitForSqlSync()
+        .then(() => {
+          if (isMounted) setIsWaitingSql(false);
+        })
+        .catch(() => {
+          if (isMounted) setIsWaitingSql(false);
+        });
+
+      // Timeout de segurança (máximo 1.8 segundos) para nunca travar a tela caso o SQL demore
+      const safetyTimer = setTimeout(() => {
+        if (isMounted) setIsWaitingSql(false);
+      }, 1800);
+
+      return () => {
+        isMounted = false;
+        clearTimeout(safetyTimer);
+        unsubscribe();
+      };
+    }
+
+    return unsubscribe;
+  }, []);
+
+  const posts = store.getPosts() || [];
+  const stories = store.getStories() || [];
+  const allProfiles = store.getProfiles() || [];
+
+  // Fallback seguro de perfil ativo caso ainda esteja carregando
+  const activeProfile = store.getActiveProfile() || allProfiles[0] || ({
+    id: 'guest',
+    user_id: 'guest',
+    username: 'aventureiro',
+    full_name: 'Aventureiro',
+    avatar_url: '',
+    bio: '',
+    profile_type: 'pessoal' as const,
+    followers_count: 0,
+    following_count: 0,
+    posts_count: 0,
+    created_at: new Date().toISOString(),
+    verified: false
+  } as Profile);
 
   const [storyViewerOpen, setStoryViewerOpen] = useState(false);
   const [selectedStoryIndex, setSelectedStoryIndex] = useState(0);
 
-  // Suggestions excluding self
-  const suggestions = allProfiles.filter((p) => p.id !== activeProfile.id);
+  // Sugestões excluindo a si mesmo
+  const suggestions = allProfiles.filter((p) => p && p.id && p.id !== activeProfile.id);
 
   const handleOpenStory = (index: number) => {
     setSelectedStoryIndex(index);
     setStoryViewerOpen(true);
   };
 
+  // Filtra apenas posts íntegros para evitar quebra ao renderizar
+  const validPosts = posts.filter((p) => p && p.id);
+
   return (
     <div className="max-w-4xl mx-auto px-2 sm:px-4 py-4 sm:py-6 grid grid-cols-1 lg:grid-cols-3 gap-8">
-      {/* Main Feed Column */}
+      {/* Coluna Principal do Feed */}
       <div className="lg:col-span-2 space-y-6">
-        {/* STORIES BAR */}
+        {/* BARRA DE STORIES */}
         <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-3.5 shadow-sm overflow-x-auto no-scrollbar flex items-center gap-4">
-          {/* Active User Add/View Story Circle */}
+          {/* Círculo do Usuário Ativo */}
           {(() => {
-            const activeStoryIndex = stories.findIndex((s) => s.profile_id === activeProfile.id);
+            const activeStoryIndex = stories.findIndex((s) => s && s.profile_id === activeProfile.id);
             const hasActiveStory = activeStoryIndex !== -1;
 
             return (
@@ -56,10 +117,11 @@ export const FeedView: React.FC<Props> = ({
                   }}
                 >
                   <div className={`p-0.5 rounded-full ${hasActiveStory ? 'bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600' : ''}`}>
-                    <img
+                    <CachedImage
                       src={activeProfile.avatar_url}
-                      alt={activeProfile.username}
-                      className="w-14 h-14 rounded-full object-cover border-2 border-white dark:border-neutral-900 group-hover:scale-105 transition-transform"
+                      cacheKey={`avatar_${activeProfile.id}`}
+                      alt={activeProfile.username || 'Seu Perfil'}
+                      className="w-16 h-16 rounded-full object-cover border-2 border-white dark:border-neutral-900 group-hover:scale-105 transition-transform"
                     />
                   </div>
                   <div
@@ -73,37 +135,62 @@ export const FeedView: React.FC<Props> = ({
                     <Plus className="w-3.5 h-3.5" />
                   </div>
                 </div>
-                <span className="text-[11px] font-medium text-neutral-800 dark:text-neutral-200 max-w-16 truncate">
+                <span className="text-[11px] font-medium text-neutral-800 dark:text-neutral-200 max-w-[70px] truncate text-center">
                   Seu story
                 </span>
               </div>
             );
           })()}
 
-          {/* Stories List */}
-          {stories.map((story, idx) => (
-            <div
-              key={story.id}
-              onClick={() => handleOpenStory(idx)}
-              className="flex flex-col items-center gap-1.5 flex-shrink-0 cursor-pointer group"
-            >
-              <div className="p-0.5 rounded-full bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 group-hover:scale-105 transition-transform">
-                <img
-                  src={story.profile.avatar_url}
-                  alt={story.profile.username}
-                  className="w-14 h-14 rounded-full object-cover border-2 border-white dark:border-neutral-900"
-                />
+          {/* Lista de Stories de Amigos */}
+          {stories.map((story, idx) => {
+            if (!story || !story.id) return null;
+            const author = story.profile || { username: 'amigo', avatar_url: '', id: story.profile_id };
+
+            return (
+              <div
+                key={story.id}
+                onClick={() => handleOpenStory(idx)}
+                className="flex flex-col items-center gap-1.5 flex-shrink-0 cursor-pointer group"
+              >
+                <div className="p-0.5 rounded-full bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 group-hover:scale-105 transition-transform">
+                  <CachedImage
+                    src={author.avatar_url}
+                    cacheKey={`avatar_${author.id || story.profile_id}`}
+                    alt={author.username}
+                    className="w-16 h-16 rounded-full object-cover border-2 border-white dark:border-neutral-900"
+                  />
+                </div>
+                <span className="text-[11px] font-medium text-neutral-800 dark:text-neutral-200 max-w-[70px] truncate text-center">
+                  {author.username}
+                </span>
               </div>
-              <span className="text-[11px] font-medium text-neutral-800 dark:text-neutral-200 max-w-16 truncate">
-                {story.profile.username}
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        {/* POSTS LIST */}
+        {/* LISTA DE POSTAGENS */}
         <div className="space-y-6">
-          {posts.length === 0 ? (
+          {/* Se estiver aguardando o banco SQL responder, exibe skeleton / placeholder provisório */}
+          {isWaitingSql ? (
+            <div className="space-y-6">
+              <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-neutral-200 dark:bg-neutral-800 animate-pulse" />
+                  <div className="space-y-1.5 flex-1">
+                    <div className="w-28 h-3 bg-neutral-200 dark:bg-neutral-800 rounded animate-pulse" />
+                    <div className="w-16 h-2 bg-neutral-100 dark:bg-neutral-800/60 rounded animate-pulse" />
+                  </div>
+                </div>
+                {/* Quadrado cinza padrão / Placeholder da imagem do post */}
+                <div className="w-full aspect-square bg-neutral-200 dark:bg-neutral-800/80 rounded-xl flex flex-col items-center justify-center gap-2 text-neutral-400">
+                  <Loader2 className="w-7 h-7 animate-spin text-rose-500" />
+                  <span className="text-xs font-semibold">Carregando dados do banco SQL...</span>
+                </div>
+              </div>
+            </div>
+          ) : validPosts.length === 0 ? (
+            /* Estado Vazio Seguro */
             <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-8 text-center space-y-3 shadow-sm">
               <div className="w-12 h-12 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-500 mx-auto flex items-center justify-center font-bold text-lg">
                 ✨
@@ -112,7 +199,7 @@ export const FeedView: React.FC<Props> = ({
                 Nenhuma publicação ainda
               </h3>
               <p className="text-xs text-neutral-500 max-w-sm mx-auto leading-relaxed">
-                Seja o primeiro a publicar fotos ou vídeos com músicas do YouTube para movimentar o seu InstaConnect!
+                Seja o primeiro a publicar fotos ou vídeos com músicas para movimentar o seu RPG!
               </p>
               <button
                 onClick={onOpenCreateModal}
@@ -122,7 +209,7 @@ export const FeedView: React.FC<Props> = ({
               </button>
             </div>
           ) : (
-            posts.map((post) => (
+            validPosts.map((post) => (
               <FeedPost
                 key={post.id}
                 post={post}
@@ -133,27 +220,28 @@ export const FeedView: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* DESKTOP RIGHT SIDEBAR (Sugestões para Você) */}
+      {/* BARRA LATERAL DIREITA NO DESKTOP (Sugestões de Perfis) */}
       <div className="hidden lg:block space-y-6">
-        {/* Active Profile Card */}
+        {/* Cartão do Perfil Ativo */}
         {activeProfile && (
           <div className="bg-white dark:bg-neutral-900 p-4 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm flex items-center justify-between">
             <div
               onClick={() => onOpenProfile(activeProfile.id)}
               className="flex items-center gap-3 cursor-pointer"
             >
-              <img
+              <CachedImage
                 src={activeProfile.avatar_url}
-                alt={activeProfile.username}
+                cacheKey={`avatar_${activeProfile.id}`}
+                alt={activeProfile.username || ''}
                 className="w-12 h-12 rounded-full object-cover border-2 border-rose-500/80"
               />
               <div>
                 <div className="flex items-center gap-1 font-bold text-sm text-neutral-900 dark:text-white">
-                  <span>@{activeProfile.username}</span>
+                  <span>@{activeProfile.username || 'aventureiro'}</span>
                   {activeProfile.verified && <span className="text-blue-500 text-xs">✓</span>}
                 </div>
                 <span className="text-xs text-neutral-500 block truncate max-w-[140px]">
-                  {activeProfile.full_name}
+                  {activeProfile.full_name || ''}
                 </span>
               </div>
             </div>
@@ -167,7 +255,7 @@ export const FeedView: React.FC<Props> = ({
           </div>
         )}
 
-        {/* Suggestions List */}
+        {/* Lista de Sugestões */}
         <div className="bg-white dark:bg-neutral-900 p-4 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-bold text-neutral-500 dark:text-neutral-400 uppercase tracking-wider">
@@ -190,6 +278,7 @@ export const FeedView: React.FC<Props> = ({
               </div>
             ) : (
               suggestions.slice(0, 5).map((p) => {
+                if (!p || !p.id) return null;
                 const isFollowing = store.isFollowing(p.id);
 
                 return (
@@ -198,9 +287,10 @@ export const FeedView: React.FC<Props> = ({
                       onClick={() => onOpenProfile(p.id)}
                       className="flex items-center gap-2.5 cursor-pointer min-w-0"
                     >
-                      <img
+                      <CachedImage
                         src={p.avatar_url}
-                        alt={p.username}
+                        cacheKey={`avatar_${p.id}`}
+                        alt={p.username || ''}
                         className="w-9 h-9 rounded-full object-cover"
                       />
                       <div className="min-w-0">
@@ -214,7 +304,10 @@ export const FeedView: React.FC<Props> = ({
                     </div>
 
                     <button
-                      onClick={() => store.toggleFollow(p.id)}
+                      onClick={() => {
+                        store.toggleFollow(p.id);
+                        setTick((t) => t + 1);
+                      }}
                       className={`text-xs font-bold px-2.5 py-1 rounded-lg transition-colors ${
                         isFollowing
                           ? 'text-neutral-500 bg-neutral-100 dark:bg-neutral-800'
@@ -230,13 +323,13 @@ export const FeedView: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Footer info */}
+        {/* Rodapé */}
         <p className="text-[10px] text-neutral-400 px-2 leading-relaxed">
-          InstaConnect © 2026 • Termos • Privacidade • Supabase Integrated • YouTube Music Powered
+          RPG © 2026 • Termos • Privacidade
         </p>
       </div>
 
-      {/* Story Viewer Modal */}
+      {/* Modal de Exibição de Stories */}
       <StoryViewerModal
         stories={stories}
         initialIndex={selectedStoryIndex}

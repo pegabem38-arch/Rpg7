@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   Home, Search, Film, MessageCircle, PlusSquare, Bell, User,
-  ChevronDown, Database, Sparkles, Layers
+  ChevronDown, Sparkles, ShieldCheck
 } from 'lucide-react';
 import { Profile } from '../types';
 
@@ -13,7 +13,8 @@ interface NavigationProps {
   unreadChats: number;
   onOpenAccountSwitcher: () => void;
   onOpenCreateModal: () => void;
-  onOpenSupabaseSettings: () => void;
+  isAdmin?: boolean;
+  onOpenAdminPanel?: () => void;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
@@ -24,12 +25,13 @@ export const Navigation: React.FC<NavigationProps> = ({
   unreadChats,
   onOpenAccountSwitcher,
   onOpenCreateModal,
-  onOpenSupabaseSettings
+  isAdmin,
+  onOpenAdminPanel
 }) => {
   const navItems = [
     { id: 'feed', label: 'Início', icon: Home },
     { id: 'search', label: 'Pesquisar', icon: Search },
-    { id: 'reels', label: 'Reels', icon: Film },
+    { id: 'reels', label: 'Curtas', icon: Film },
     { id: 'direct', label: 'Direct', icon: MessageCircle, badge: unreadChats },
     { id: 'notifications', label: 'Notificações', icon: Bell, badge: unreadNotifications },
     { id: 'profile', label: 'Perfil', icon: User, isProfile: true },
@@ -135,18 +137,23 @@ export const Navigation: React.FC<NavigationProps> = ({
               <PlusSquare className="w-5 h-5" />
               <span>Criar Publicação</span>
             </button>
-          </nav>
-        </div>
 
-        {/* Bottom Actions: Supabase Settings */}
-        <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800 flex flex-col gap-2">
-          <button
-            onClick={onOpenSupabaseSettings}
-            className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100 transition-colors"
-          >
-            <Database className="w-4 h-4" />
-            <span>Supabase Ativo & Config</span>
-          </button>
+            {/* Exclusive Admin Panel Button (Only visible for cedrico124i@gmail.com) */}
+            {isAdmin && onOpenAdminPanel && (
+              <button
+                onClick={onOpenAdminPanel}
+                className="flex items-center justify-between px-3.5 py-3 mt-1 rounded-xl bg-gradient-to-r from-amber-500/10 via-amber-600/10 to-rose-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 font-bold text-sm hover:scale-[1.01] transition-transform shadow-sm text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <ShieldCheck className="w-5 h-5 text-amber-500 shrink-0" />
+                  <span>Painel Admin</span>
+                </div>
+                <span className="px-1.5 py-0.5 text-[9px] font-black uppercase rounded bg-amber-500 text-white shadow-sm">
+                  Geral
+                </span>
+              </button>
+            )}
+          </nav>
         </div>
       </aside>
 
@@ -167,18 +174,26 @@ export const Navigation: React.FC<NavigationProps> = ({
           <ChevronDown className="w-3.5 h-3.5 text-neutral-500" />
         </button>
 
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onOpenSupabaseSettings}
-            className="p-1.5 rounded-full text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50"
-            title="Configurar Supabase"
-          >
-            <Database className="w-4 h-4" />
-          </button>
-
+        <div className="flex items-center gap-2">
+          {/* Admin Panel Button (Mobile) */}
+          {isAdmin && onOpenAdminPanel && (
+            <button
+              onClick={onOpenAdminPanel}
+              className="p-2 rounded-xl bg-amber-100 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 relative"
+              title="Painel do Administrador Geral"
+            >
+              <ShieldCheck className="w-5 h-5" />
+              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-white dark:ring-neutral-900" />
+            </button>
+          )}
           <button
             onClick={() => onSelectTab('notifications')}
-            className="relative p-2 text-neutral-700 dark:text-neutral-200"
+            className={`relative p-2 rounded-xl transition-colors ${
+              currentTab === 'notifications'
+                ? 'text-rose-500 bg-rose-50 dark:bg-rose-950/50'
+                : 'text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+            }`}
+            title="Notificações"
           >
             <Bell className="w-5 h-5" />
             {unreadNotifications > 0 && (
@@ -188,7 +203,12 @@ export const Navigation: React.FC<NavigationProps> = ({
 
           <button
             onClick={() => onSelectTab('direct')}
-            className="relative p-2 text-neutral-700 dark:text-neutral-200"
+            className={`relative p-2 rounded-xl transition-colors ${
+              currentTab === 'direct'
+                ? 'text-rose-500 bg-rose-50 dark:bg-rose-950/50'
+                : 'text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+            }`}
+            title="Direct"
           >
             <MessageCircle className="w-5 h-5" />
             {unreadChats > 0 && (
@@ -200,20 +220,22 @@ export const Navigation: React.FC<NavigationProps> = ({
         </div>
       </header>
 
-      {/* MOBILE BOTTOM NAVIGATION */}
+      {/* MOBILE BOTTOM NAVIGATION (Aba de notificação mantida exclusivamente na barra superior) */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white/95 dark:bg-neutral-900/95 backdrop-blur-md border-t border-neutral-200 dark:border-neutral-800 flex items-center justify-around px-2 z-40">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = currentTab === item.id;
+        {navItems
+          .filter((item) => item.id !== 'notifications')
+          .map((item) => {
+            const Icon = item.icon;
+            const isActive = currentTab === item.id;
 
-          return (
-            <button
-              key={item.id}
-              onClick={() => onSelectTab(item.id)}
-              className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl relative ${
-                isActive ? 'text-rose-500 font-bold' : 'text-neutral-600 dark:text-neutral-400'
-              }`}
-            >
+            return (
+              <button
+                key={item.id}
+                onClick={() => onSelectTab(item.id)}
+                className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl relative ${
+                  isActive ? 'text-rose-500 font-bold' : 'text-neutral-600 dark:text-neutral-400'
+                }`}
+              >
               {item.isProfile ? (
                 <img
                   src={activeProfile.avatar_url}

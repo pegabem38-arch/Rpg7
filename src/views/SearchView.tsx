@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, UserPlus, UserCheck, Sparkles, MapPin, Grid, Film } from 'lucide-react';
 import { store } from '../services/store';
 import { Profile } from '../types';
@@ -8,6 +8,11 @@ interface Props {
 }
 
 export const SearchView: React.FC<Props> = ({ onOpenProfile }) => {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    return store.subscribe(() => setTick((t) => t + 1));
+  }, []);
+
   const [query, setQuery] = useState('');
   const activeProfile = store.getActiveProfile();
   const allProfiles = store.getProfiles();
@@ -33,7 +38,7 @@ export const SearchView: React.FC<Props> = ({ onOpenProfile }) => {
             <Search className="w-6 h-6 text-rose-500" /> Explorar & Pesquisar Perfis
           </h2>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-            Encontre amigos, criadores de conteúdo e perfis para seguir no InstaConnect.
+            Encontre amigos, criadores de conteúdo e perfis para seguir no RPG.
           </p>
         </div>
 
@@ -118,6 +123,7 @@ export const SearchView: React.FC<Props> = ({ onOpenProfile }) => {
                         onClick={(e) => {
                           e.stopPropagation();
                           store.toggleFollow(p.id);
+                          setTick((t) => t + 1);
                         }}
                         className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all ${
                           isFollowing

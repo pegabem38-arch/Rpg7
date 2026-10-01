@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Search, UserCheck, UserPlus } from 'lucide-react';
 import { Profile } from '../types';
 import { store } from '../services/store';
@@ -18,6 +18,11 @@ export const FollowListModal: React.FC<Props> = ({
   profiles,
   onOpenProfile
 }) => {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    return store.subscribe(() => setTick((t) => t + 1));
+  }, []);
+
   const [searchTerm, setSearchTerm] = useState('');
 
   if (!isOpen) return null;
@@ -95,7 +100,10 @@ export const FollowListModal: React.FC<Props> = ({
 
                   {!isSelf && (
                     <button
-                      onClick={() => store.toggleFollow(p.id)}
+                      onClick={() => {
+                        store.toggleFollow(p.id);
+                        setTick((t) => t + 1);
+                      }}
                       className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all ${
                         isFollowing
                           ? 'bg-neutral-200 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200'

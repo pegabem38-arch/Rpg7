@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Heart, MessageCircle, Share2, Music, Volume2, VolumeX, UserPlus, UserCheck, Film, Trash2 } from 'lucide-react';
 import { store } from '../services/store';
 import { YouTubePlayerChip } from '../components/YouTubePlayerChip';
@@ -9,6 +9,11 @@ interface Props {
 }
 
 export const ReelsView: React.FC<Props> = ({ onOpenProfile }) => {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    return store.subscribe(() => setTick((t) => t + 1));
+  }, []);
+
   const reels = store.getReels();
   const [activeReelIndex, setActiveReelIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(true);
@@ -36,14 +41,16 @@ export const ReelsView: React.FC<Props> = ({ onOpenProfile }) => {
         <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-rose-500 to-purple-600 flex items-center justify-center mb-4 shadow-xl shadow-rose-500/20">
           <Film className="w-8 h-8 text-white" />
         </div>
-        <h2 className="text-xl font-bold mb-2">Nenhum Reels publicado</h2>
+        <h2 className="text-xl font-bold mb-2">Nenhum Curta publicado</h2>
         <p className="text-xs text-neutral-400 max-w-xs mb-6">
-          Seja o primeiro a publicar um vídeo curto (Reels) no InstaConnect!
+          Seja o primeiro a publicar um vídeo curto (Curtas) no RPG!
         </p>
       </div>
     );
   }
 
+  const activeProfile = store.getActiveProfile();
+  const isSelf = activeProfile ? activeProfile.id === activeReel.profile_id : false;
   const isFollowing = store.isFollowing(activeReel.profile_id);
 
   return (
@@ -99,16 +106,21 @@ export const ReelsView: React.FC<Props> = ({ onOpenProfile }) => {
                 @{activeReel.profile.username}
               </span>
 
-              <button
-                onClick={() => store.toggleFollow(activeReel.profile_id)}
-                className={`px-3 py-1 rounded-full text-xs font-semibold backdrop-blur-md ${
-                  isFollowing
-                    ? 'bg-white/20 text-white'
-                    : 'bg-rose-500 text-white'
-                }`}
-              >
-                {isFollowing ? 'Seguindo' : 'Seguir'}
-              </button>
+              {!isSelf && (
+                <button
+                  onClick={() => {
+                    store.toggleFollow(activeReel.profile_id);
+                    setTick((t) => t + 1);
+                  }}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold backdrop-blur-md ${
+                    isFollowing
+                      ? 'bg-white/20 text-white'
+                      : 'bg-rose-500 text-white'
+                  }`}
+                >
+                  {isFollowing ? 'Seguindo' : 'Seguir'}
+                </button>
+              )}
             </div>
 
             {/* Caption */}
@@ -164,7 +176,7 @@ export const ReelsView: React.FC<Props> = ({ onOpenProfile }) => {
             {activeReel.profile_id === store.getActiveProfile().id && (
               <button
                 onClick={() => {
-                  if (confirm('Deseja realmente excluir este Reels?')) {
+                  if (confirm('Deseja realmente excluir este Curta?')) {
                     store.deleteReel(activeReel.id);
                     if (activeReelIndex > 0) {
                       setActiveReelIndex(activeReelIndex - 1);
@@ -174,7 +186,7 @@ export const ReelsView: React.FC<Props> = ({ onOpenProfile }) => {
                   }
                 }}
                 className="flex flex-col items-center gap-1 group"
-                title="Excluir Reels"
+                title="Excluir Curta"
               >
                 <div className="p-3 rounded-full bg-red-600/80 hover:bg-red-600 backdrop-blur-md transition-all group-hover:scale-110 shadow-lg">
                   <Trash2 className="w-6 h-6 text-white" />
