@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Image as ImageIcon, User } from 'lucide-react';
 import { imageCache } from '../services/imageCache';
 
 interface CachedImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
@@ -8,6 +7,14 @@ interface CachedImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   fallbackSrc?: string;
   preferBlobUrl?: boolean;
 }
+
+// Fallback visual estável para avatares (círculos)
+const FALLBACK_AVATAR_SVG =
+  'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><rect width="128" height="128" fill="%23262626"/><circle cx="64" cy="50" r="24" fill="%23525252"/><path d="M24 112 c0 -26 18 -42 40 -42 s40 16 40 42" fill="%23525252"/></svg>';
+
+// Fallback visual quadrado cinza padrão para mídia de feed/posts
+const FALLBACK_MEDIA_SVG =
+  'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400"><rect width="400" height="400" fill="%23262626"/><rect x="140" y="140" width="120" height="90" rx="12" fill="%23383838"/><circle cx="175" cy="170" r="12" fill="%23555555"/><path d="M152 215 l28 -30 l24 24 l20 -18 l24 24 z" fill="%23555555"/></svg>';
 
 /**
  * Validação rigorosa do caminho da imagem (SQL, arquivo local ou base64)
@@ -31,12 +38,13 @@ function isValidImagePath(val?: string | null): boolean {
 /**
  * CachedImage
  * 
- * Renderização ultra-rápida (0ms) idêntica à aba de perfil.
- * 1. Busca síncrona imediata da RAM/cache sem atrasos, spinners ou opacity-0.
- * 2. Proteção contra Nulo/Vazio: se o caminho no SQL for vazio ou nulo, exibe
- *    o placeholder cinza padrão sem quebrar a tela.
- * 3. Proteção contra erro de arquivo: se o arquivo físico não existir, ativa o placeholder
- *    graciosamente via onError sem quebrar o componente.
+ * 1. Estabilidade no DOM: Renderiza sempre uma tag <img> consistente, evitando
+ *    erros de reconciliação do React ("insertBefore") ao chavear elementos.
+ * 2. Proteção contra Nulo/Vazio: Se o caminho do SQL vier vazio, nulo ou inválido,
+ *    utiliza imediatamente o fallback SVG sem quebrar a tela.
+ * 3. Proteção contra arquivo inacessível: Se o arquivo físico não existir no celular/navegador,
+ *    chaveia de forma transparente para o placeholder sem travar a interface.
+ * 4. Carregamento em 0ms: Leitura síncrona imediata da RAM/cache.
  */
 export const CachedImage: React.FC<CachedImageProps> = ({
   src,
@@ -49,14 +57,14 @@ export const CachedImage: React.FC<CachedImageProps> = ({
   ...props
 }) => {
   const isCircle = className.includes('rounded-full');
+  const defaultPlaceholder = isCircle ? FALLBACK_AVATAR_SVG : FALLBACK_MEDIA_SVG;
   const valid = isValidImagePath(src);
-
-  // Se o caminho for nulo ou vazio desde o início, ativa o estado de erro/placeholder
-  const [hasError, setHasError] = useState(!valid);
 
   // Busca síncrona na memória RAM em 0ms
   const getInitialSrc = () => {
-    if (!valid || !src) return '';
+    if (!valid || !src) {
+      return fallbackSrc && isValidImagePath(fallbackSrc) ? fallbackSrc : defaultPlaceholder;
+    }
     try {
       const cached = imageCache.get(src, cacheKey, preferBlobUrl);
       return cached || src;
@@ -70,11 +78,10 @@ export const CachedImage: React.FC<CachedImageProps> = ({
   useEffect(() => {
     const isNowValid = isValidImagePath(src);
     if (!isNowValid || !src) {
-      setHasError(true);
+      setCurrentSrc(fallbackSrc && isValidImagePath(fallbackSrc) ? fallbackSrc : defaultPlaceholder);
       return;
     }
 
-    setHasError(false);
     try {
       if (!imageCache.has(src)) {
         imageCache.set(cacheKey || src, src);
@@ -90,7 +97,7 @@ export const CachedImage: React.FC<CachedImageProps> = ({
         setCurrentSrc(src);
       }
     }
-  }, [src, cacheKey, preferBlobUrl]);
+  }, [src, cacheKey, preferBlobUrl, fallbackSrc, defaultPlaceholder]);
 
   // Tratamento seguro de erro caso o arquivo físico não exista no celular ou navegador
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
@@ -98,7 +105,10 @@ export const CachedImage: React.FC<CachedImageProps> = ({
       setCurrentSrc(fallbackSrc);
       return;
     }
-    setHasError(true);
+    // Se o arquivo falhar ao abrir, chaveia suavemente para o SVG placeholder
+    if (currentSrc !== defaultPlaceholder) {
+      setCurrentSrc(defaultPlaceholder);
+    }
     if (onError) {
       try {
         onError(e);
@@ -106,29 +116,7 @@ export const CachedImage: React.FC<CachedImageProps> = ({
     }
   };
 
-  // Se o caminho for nulo/vazio ou o arquivo local não existir, exibe o quadrado/círculo cinza padrão
-  if (hasError || !currentSrc) {
-    return (
-      <div
-        className={`bg-neutral-800 dark:bg-neutral-800 border border-neutral-700/50 flex flex-col items-center justify-center text-neutral-500 select-none overflow-hidden ${className}`}
-        aria-label="Imagem indisponível"
-        title="Imagem não encontrada ou pendente de carregamento"
-      >
-        {isCircle ? (
-          <User className="w-1/2 h-1/2 text-neutral-500 opacity-60" />
-        ) : (
-          <div className="flex flex-col items-center justify-center gap-1.5 p-4 text-center">
-            <ImageIcon className="w-8 h-8 text-neutral-500 opacity-50" />
-            <span className="text-[10px] text-neutral-400 font-medium tracking-wide">
-              Mídia Indisponível
-            </span>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // Renderiza diretamente a tag img (0ms imediato, sem div externa e sem opacity-0 artificial)
+  // Renderiza SEMPRE a tag <img> estável (sem trocar de nó no DOM)
   return (
     <img
       src={currentSrc}

@@ -14,8 +14,8 @@ interface State {
 
 /**
  * ErrorBoundary Global
- * Captura qualquer erro de renderização ou quebra imprevista no ciclo de vida
- * dos componentes, evitando que a tela fique branca ou mostre o rosto triste do navegador.
+ * Captura qualquer falha imprevista no ciclo de vida dos componentes,
+ * evitando tela branca ou interrupções no navegador.
  */
 export class ErrorBoundary extends React.Component<Props, State> {
   constructor(props: Props) {
@@ -36,7 +36,11 @@ export class ErrorBoundary extends React.Component<Props, State> {
     this.setState({ error, errorInfo });
   }
 
-  private handleReset = () => {
+  private handleSoftReset = () => {
+    this.setState({ hasError: false, error: null, errorInfo: null });
+  };
+
+  private handleHardReset = () => {
     this.setState({ hasError: false, error: null, errorInfo: null });
     window.location.reload();
   };
@@ -44,18 +48,18 @@ export class ErrorBoundary extends React.Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center p-4">
+        <div className="min-h-[300px] w-full bg-neutral-950 text-neutral-100 flex items-center justify-center p-4">
           <div className="max-w-md w-full bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 text-center space-y-5 shadow-2xl">
             <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 mx-auto flex items-center justify-center">
               <AlertTriangle className="w-8 h-8" />
             </div>
 
             <div className="space-y-2">
-              <h2 className="text-xl font-black text-white">
-                {this.props.fallbackTitle || 'Ocorreu uma instabilidade visual'}
+              <h2 className="text-lg font-black text-white">
+                {this.props.fallbackTitle || 'Instabilidade momentânea contornada'}
               </h2>
               <p className="text-xs text-neutral-400 leading-relaxed">
-                Uma imagem pendente de sincronização com o banco ou arquivo local inacessível tentou ser lida. O aplicativo impediu o travamento do sistema.
+                O aplicativo isolou uma discrepância no carregamento para manter sua navegação segura.
               </p>
             </div>
 
@@ -67,13 +71,20 @@ export class ErrorBoundary extends React.Component<Props, State> {
               </div>
             )}
 
-            <div className="flex gap-3 pt-2">
+            <div className="flex gap-2 pt-2">
               <button
                 type="button"
-                onClick={this.handleReset}
-                className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-gradient-to-r from-rose-500 to-purple-600 hover:from-rose-600 hover:to-purple-700 text-white font-bold text-xs shadow-lg transition-transform active:scale-95"
+                onClick={this.handleSoftReset}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-bold text-xs transition-colors"
               >
-                <RefreshCw className="w-4 h-4" /> Recarregar Aplicativo
+                Tentar Novamente
+              </button>
+              <button
+                type="button"
+                onClick={this.handleHardReset}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-gradient-to-r from-rose-500 to-purple-600 hover:from-rose-600 hover:to-purple-700 text-white font-bold text-xs shadow-lg transition-transform active:scale-95"
+              >
+                <RefreshCw className="w-3.5 h-3.5" /> Recarregar
               </button>
             </div>
           </div>

@@ -296,7 +296,7 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
       >
         {/* CONDIÇÃO (IF): Se o caminho no SQL for vazio, nulo ou o arquivo local ainda não existir */}
         {(!post.media_url || typeof post.media_url !== 'string' || post.media_url.trim() === '' || post.media_url === 'null' || post.media_url === 'undefined') ? (
-          <div className="w-full h-full min-h-[320px] bg-neutral-800 dark:bg-neutral-800 flex flex-col items-center justify-center gap-2.5 text-neutral-400 select-none p-6 text-center">
+          <div key="post-placeholder" className="w-full h-full min-h-[320px] bg-neutral-800 dark:bg-neutral-800 flex flex-col items-center justify-center gap-2.5 text-neutral-400 select-none p-6 text-center">
             <div className="w-12 h-12 rounded-xl bg-neutral-700/50 flex items-center justify-center text-neutral-400 shadow-inner">
               <ImageIcon className="w-6 h-6 opacity-60" />
             </div>
@@ -306,6 +306,7 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
           </div>
         ) : (
           <CachedImage
+            key={`post-media-${post.id}`}
             src={post.media_url}
             cacheKey={`post_${post.id}`}
             alt="Post Media"
@@ -315,14 +316,14 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
         )}
 
         {showHeartOverlay && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/20 animate-in zoom-in-50 duration-200 pointer-events-none">
+          <div key="heart-overlay" className="absolute inset-0 flex items-center justify-center bg-black/20 animate-in zoom-in-50 duration-200 pointer-events-none">
             <Heart className="w-24 h-24 text-rose-500 fill-rose-500 drop-shadow-2xl animate-bounce" />
           </div>
         )}
 
         {/* Audio Player for Attached Music Track (Hidden iframe - No video visible!) */}
         {post.youtube_track && post.youtube_track.youtube_id && (
-          <>
+          <div key="post-audio-container">
             {isInView && (
               <iframe
                 ref={iframeRef}
@@ -385,7 +386,7 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
                 </>
               )}
             </button>
-          </>
+          </div>
         )}
       </div>
 

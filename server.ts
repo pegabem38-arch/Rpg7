@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import https from 'https';
 import http from 'http';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -110,15 +111,19 @@ async function startServer() {
     }
   });
 
-  const isProduction = process.env.NODE_ENV === 'production';
+  const distPath = path.resolve(__dirname, 'dist');
+  const hasDist = fs.existsSync(distPath) && fs.existsSync(path.join(distPath, 'index.html'));
+  const isProduction = process.env.NODE_ENV === 'production' || hasDist;
 
-  if (isProduction) {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+  if (isProduction && hasDist) {
+    console.log(`[Production] Serving static files from ${distPath}`);
+    app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   } else {
     // Development with Vite middleware
+    console.log(`[Development] Initializing Vite middleware on port ${PORT}`);
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { 

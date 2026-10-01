@@ -173,7 +173,7 @@ export const FeedView: React.FC<Props> = ({
         <div className="space-y-6">
           {/* Se estiver aguardando o banco SQL responder, exibe skeleton / placeholder provisório */}
           {isWaitingSql ? (
-            <div className="space-y-6">
+            <div key="feed-skeleton-loading" className="space-y-6">
               <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-5 shadow-sm space-y-4">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-neutral-200 dark:bg-neutral-800 animate-pulse" />
@@ -191,7 +191,7 @@ export const FeedView: React.FC<Props> = ({
             </div>
           ) : validPosts.length === 0 ? (
             /* Estado Vazio Seguro */
-            <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-8 text-center space-y-3 shadow-sm">
+            <div key="feed-empty-state" className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-8 text-center space-y-3 shadow-sm">
               <div className="w-12 h-12 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-500 mx-auto flex items-center justify-center font-bold text-lg">
                 ✨
               </div>
@@ -209,13 +209,15 @@ export const FeedView: React.FC<Props> = ({
               </button>
             </div>
           ) : (
-            validPosts.map((post) => (
-              <FeedPost
-                key={post.id}
-                post={post}
-                onOpenProfile={onOpenProfile}
-              />
-            ))
+            <div key="feed-posts-container" className="space-y-6">
+              {validPosts.map((post) => (
+                <FeedPost
+                  key={`feed-post-${post.id}`}
+                  post={post}
+                  onOpenProfile={onOpenProfile}
+                />
+              ))}
+            </div>
           )}
         </div>
       </div>
