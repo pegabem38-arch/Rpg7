@@ -121,20 +121,31 @@ export const ProfileView: React.FC<Props> = ({
     }
   };
 
-  // Content Filter
+  // Content Filter: Um post pertence estritamente a este perfil se o profile_id corresponder ao ID deste perfil
   const allPosts = store.getPosts();
-  const userPosts = allPosts.filter((p) => 
-    p.profile_id === profile.id || 
-    (p.profile && p.profile.id === profile.id) ||
-    (p.profile && p.profile.username && profile.username && p.profile.username.toLowerCase() === profile.username.toLowerCase()) ||
-    p.profile_id === profile.username
-  );
-  const userReels = store.getReels().filter((r) => 
-    r.profile_id === profile.id || 
-    (r.profile && r.profile.id === profile.id) ||
-    (r.profile && r.profile.username && profile.username && r.profile.username.toLowerCase() === profile.username.toLowerCase()) ||
-    r.profile_id === profile.username
-  );
+  const userPosts = allPosts.filter((p) => {
+    if (!p) return false;
+    // 1. Verificação rigorosa e prioritária pelo ID único do perfil
+    if (p.profile_id && profile.id) {
+      return p.profile_id === profile.id;
+    }
+    // 2. Se profile_id não estiver preenchido, verifica pelo ID do objeto profile
+    if (p.profile && p.profile.id && profile.id) {
+      return p.profile.id === profile.id;
+    }
+    return false;
+  });
+
+  const userReels = store.getReels().filter((r) => {
+    if (!r) return false;
+    if (r.profile_id && profile.id) {
+      return r.profile_id === profile.id;
+    }
+    if (r.profile && r.profile.id && profile.id) {
+      return r.profile.id === profile.id;
+    }
+    return false;
+  });
   const savedPosts = store.getSavedPosts();
 
   // Follower/Following Lists

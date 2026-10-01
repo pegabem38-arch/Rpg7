@@ -155,6 +155,7 @@ class Store {
 
   constructor() {
     this.sanitizeFollowers();
+    this.sanitizePostAuthors();
     this.recalculateProfileCounts();
     // Salva e pré-carrega imediatamente todas as imagens Base64 na memória RAM
     this.prewarmImageCache();
@@ -391,37 +392,28 @@ class Store {
 
     try {
       // 1. Check & Sync profiles from Supabase table
-      const { data: remoteProfiles, error } = await supabase.from('profiles').select('*').limit(50);
+      const { data: remoteProfiles, error } = await supabase.from('profiles').select('*').limit(100);
       if (!error && remoteProfiles && remoteProfiles.length > 0) {
         let changed = false;
         remoteProfiles.forEach((rp: any) => {
-          const existingIdx = this.state.profiles.findIndex(
-            (p) => p.id === rp.id || (p.username && rp.username && p.username.toLowerCase() === rp.username.toLowerCase())
-          );
+          // Identifica o perfil EXCLUSIVAMENTE pelo seu ID primário (UUID)!
+          // NUNCA associar perfis de contas diferentes apenas por terem usernames iguais!
+          const existingIdx = this.state.profiles.findIndex((p) => p.id === rp.id);
           if (existingIdx === -1) {
             this.state.profiles.push(rp);
             changed = true;
           } else {
-            // Sincroniza o ID local com o ID do Supabase caso estejam divergentes
-            if (this.state.profiles[existingIdx].id !== rp.id) {
-              const oldId = this.state.profiles[existingIdx].id;
-              this.state.profiles[existingIdx].id = rp.id;
-              if (this.state.activeProfileId === oldId) {
-                this.state.activeProfileId = rp.id;
-              }
-              this.state.posts.forEach((post) => {
-                if (post.profile_id === oldId) {
-                  post.profile_id = rp.id;
-                }
-              });
-              this.state.followers.forEach((f) => {
-                if (f.follower_id === oldId) f.follower_id = rp.id;
-                if (f.following_id === oldId) f.following_id = rp.id;
-              });
-              changed = true;
-            }
+            // Atualiza dados apenas se for o mesmo perfil de ID idêntico
             if (rp.avatar_url && rp.avatar_url !== this.state.profiles[existingIdx].avatar_url) {
               this.state.profiles[existingIdx].avatar_url = rp.avatar_url;
+              changed = true;
+            }
+            if (rp.full_name && rp.full_name !== this.state.profiles[existingIdx].full_name) {
+              this.state.profiles[existingIdx].full_name = rp.full_name;
+              changed = true;
+            }
+            if (rp.bio !== undefined && rp.bio !== this.state.profiles[existingIdx].bio) {
+              this.state.profiles[existingIdx].bio = rp.bio;
               changed = true;
             }
           }
@@ -445,9 +437,53 @@ class Store {
 
       if (!postErr && remotePosts && remotePosts.length > 0) {
         let postChanged = false;
+
+        // Pré-carrega perfis de autores remotos que ainda não constam no estado local
+        const missingAuthorIds = Array.from(
+          new Set(
+            remotePosts
+              .map((rp: any) => rp.profile_id)
+              .filter((pid: string) => pid && !this.state.profiles.some((p) => p.id === pid))
+          )
+        );
+
+        if (missingAuthorIds.length > 0) {
+          try {
+            const { data: fetchedAuthors } = await supabase
+              .from('profiles')
+              .select('*')
+              .in('id', missingAuthorIds);
+
+            if (fetchedAuthors && fetchedAuthors.length > 0) {
+              for (const fa of fetchedAuthors) {
+                if (!this.state.profiles.some((p) => p.id === fa.id)) {
+                  this.state.profiles.push(fa);
+                }
+              }
+              imageCache.cacheProfiles(fetchedAuthors);
+            }
+          } catch {}
+        }
+
         remotePosts.forEach((rp: any) => {
           const existingIdx = this.state.posts.findIndex((p) => p.id === rp.id);
-          const author = this.state.profiles.find((p) => p.id === rp.profile_id) || this.getActiveProfile();
+          // O autor DEVE corresponder estritamente ao profile_id do post! NUNCA atribuir ao perfil logado!
+          const realAuthor = this.state.profiles.find((p) => p.id === rp.profile_id);
+          const author: Profile = realAuthor || {
+            id: rp.profile_id,
+            user_id: rp.profile_id,
+            username: 'aventureiro',
+            full_name: 'Aventureiro',
+            avatar_url: '',
+            bio: '',
+            profile_type: 'pessoal',
+            followers_count: 0,
+            following_count: 0,
+            posts_count: 0,
+            created_at: rp.created_at || new Date().toISOString(),
+            verified: false
+          };
+
           const mappedPost: Post = {
             id: rp.id,
             profile_id: rp.profile_id,
@@ -469,8 +505,17 @@ class Store {
             this.state.posts.push(mappedPost);
             postChanged = true;
           } else {
-            if (this.state.posts[existingIdx].media_url !== rp.media_url) {
-              this.state.posts[existingIdx].media_url = rp.media_url;
+            const currentPost = this.state.posts[existingIdx];
+            if (currentPost.profile_id !== rp.profile_id) {
+              currentPost.profile_id = rp.profile_id;
+              currentPost.profile = author;
+              postChanged = true;
+            } else if (!currentPost.profile || currentPost.profile.id !== rp.profile_id) {
+              currentPost.profile = author;
+              postChanged = true;
+            }
+            if (currentPost.media_url !== rp.media_url) {
+              currentPost.media_url = rp.media_url;
               postChanged = true;
             }
           }
@@ -478,6 +523,7 @@ class Store {
 
         if (postChanged) {
           this.state.posts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+          this.recalculateProfileCounts();
           this.saveState();
         }
         // Salva imagens Base64 de todos os posts do SQL diretamente na memória RAM
@@ -538,34 +584,7 @@ class Store {
         profile.id = generateUUID();
       }
 
-      // 2. Verificar se o perfil já existe pelo username no Supabase para sincronizar o ID
-      if (profile.username) {
-        const { data: existingProf } = await supabase
-          .from('profiles')
-          .select('id, username')
-          .eq('username', profile.username.toLowerCase())
-          .maybeSingle();
-
-        if (existingProf && existingProf.id && existingProf.id !== profile.id) {
-          const oldId = profile.id;
-          profile.id = existingProf.id;
-          this.state.profiles.forEach((p) => {
-            if (p.id === oldId || (p.username && p.username.toLowerCase() === profile.username.toLowerCase())) {
-              p.id = existingProf.id;
-            }
-          });
-          if (this.state.activeProfileId === oldId) {
-            this.state.activeProfileId = existingProf.id;
-          }
-          this.state.posts.forEach((p) => {
-            if (p.profile_id === oldId) {
-              p.profile_id = existingProf.id;
-            }
-          });
-        }
-      }
-
-      // 3. Upsert do perfil
+      // 2. Upsert do perfil utilizando o ID único do perfil
       const { error } = await supabase.from('profiles').upsert({
         id: profile.id,
         username: profile.username.toLowerCase(),
@@ -591,13 +610,16 @@ class Store {
 
   public async savePostToSupabase(post: Post) {
     const supabase = getSupabaseClient();
-    if (!supabase || !post) return;
+    if (!supabase || !post || !post.profile_id) return;
     try {
       // 1. Garantir que o perfil autor exista com segurança no Supabase antes de inserir o post
-      const author = post.profile || this.state.profiles.find((p) => p.id === post.profile_id) || this.getActiveProfile();
+      // NUNCA fazer fallback para this.getActiveProfile() se o post pertencer a outro autor!
+      const author = post.profile && post.profile.id === post.profile_id
+        ? post.profile
+        : this.state.profiles.find((p) => p.id === post.profile_id);
+
       if (author) {
         await this.saveProfileToSupabase(author);
-        post.profile_id = author.id;
       }
 
       // 2. Garantir que o post.id seja um UUID válido
@@ -1143,6 +1165,35 @@ class Store {
 
       p.followers_count = Math.min(actualFollowers, maxPossibleFollowers);
       p.following_count = Math.min(actualFollowing, maxPossibleFollowers);
+    }
+  }
+
+  public sanitizePostAuthors() {
+    const activeProfile = this.getActiveProfile();
+    for (const post of this.state.posts || []) {
+      if (!post) continue;
+      if (post.profile_id) {
+        const correctAuthor = this.state.profiles.find((p) => p.id === post.profile_id);
+        if (correctAuthor) {
+          post.profile = correctAuthor;
+        } else if (activeProfile && post.profile_id !== activeProfile.id && post.profile?.id === activeProfile.id) {
+          // Desassocia do perfil ativo caso o post pertença a outro profile_id
+          post.profile = {
+            id: post.profile_id,
+            user_id: post.profile_id,
+            username: 'aventureiro',
+            full_name: 'Aventureiro',
+            avatar_url: '',
+            bio: '',
+            profile_type: 'pessoal',
+            followers_count: 0,
+            following_count: 0,
+            posts_count: 0,
+            created_at: post.created_at || new Date().toISOString(),
+            verified: false
+          };
+        }
+      }
     }
   }
 
