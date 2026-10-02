@@ -41,8 +41,8 @@ export const CommunityModal: React.FC<Props> = ({
   const isAdmin = store.isCommunityAdmin(community.id, activeProfile.id);
 
   const groups = store.getCommunityGroups(communityId);
-  const allProfiles = store.getProfiles();
-  const members = allProfiles.filter((p) => community.member_profile_ids.includes(p.id));
+  const allProfiles = store.getDiscoverableProfiles();
+  const members = community.member_profile_ids.map((id) => store.getProfileById(id)).filter(Boolean) as Profile[];
 
   // Candidates not in community
   const candidateProfiles = allProfiles.filter(

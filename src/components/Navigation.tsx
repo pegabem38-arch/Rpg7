@@ -8,7 +8,7 @@ import { Profile } from '../types';
 interface NavigationProps {
   currentTab: string;
   onSelectTab: (tab: string) => void;
-  activeProfile: Profile;
+  activeProfile?: Profile | null;
   unreadNotifications: number;
   unreadChats: number;
   onOpenAccountSwitcher: () => void;
@@ -28,6 +28,16 @@ export const Navigation: React.FC<NavigationProps> = ({
   isAdmin,
   onOpenAdminPanel
 }) => {
+  const safeProfile = activeProfile || {
+    id: 'unknown',
+    username: 'perfil',
+    full_name: 'Perfil',
+    avatar_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80',
+    profile_type: 'pessoal' as const,
+    verified: false,
+    banned: false
+  };
+
   const navItems = [
     { id: 'feed', label: 'Início', icon: Home },
     { id: 'search', label: 'Pesquisar', icon: Search },
@@ -69,21 +79,21 @@ export const Navigation: React.FC<NavigationProps> = ({
           >
             <div className="flex items-center gap-2.5 min-w-0">
               <img
-                src={activeProfile.avatar_url}
-                alt={activeProfile.username}
+                src={safeProfile.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80'}
+                alt={safeProfile.username}
                 className="w-9 h-9 rounded-full object-cover border border-rose-500/40"
               />
               <div className="min-w-0">
                 <div className="flex items-center gap-1">
                   <span className="text-xs font-bold text-neutral-900 dark:text-white truncate">
-                    @{activeProfile.username}
+                    @{safeProfile.username}
                   </span>
-                  {activeProfile.verified && (
+                  {safeProfile.verified && (
                     <span className="text-blue-500 text-[11px]">✓</span>
                   )}
                 </div>
                 <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-300 capitalize inline-block">
-                  {activeProfile.profile_type}
+                  {safeProfile.profile_type}
                 </span>
               </div>
             </div>
@@ -238,7 +248,7 @@ export const Navigation: React.FC<NavigationProps> = ({
               >
               {item.isProfile ? (
                 <img
-                  src={activeProfile.avatar_url}
+                  src={safeProfile.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80'}
                   alt="Profile"
                   className={`w-6 h-6 rounded-full object-cover border-2 ${
                     isActive ? 'border-rose-500' : 'border-transparent'

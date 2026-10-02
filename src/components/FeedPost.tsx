@@ -19,7 +19,7 @@ interface Props {
 export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
   if (!post || !post.id) return null;
 
-  const author = post.profile || store.getProfiles().find((p) => p.id === post.profile_id) || {
+  const author = post.profile || store.getProfileById(post.profile_id) || {
     id: post.profile_id || 'unknown',
     username: 'aventureiro',
     name: 'Aventureiro',

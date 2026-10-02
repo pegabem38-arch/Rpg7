@@ -114,6 +114,8 @@ export const SUPABASE_SQL_SCHEMA = `-- =========================================
 create table if not exists public.profiles (
   id uuid default gen_random_uuid() primary key,
   user_id uuid,
+  google_email text,
+  google_name text,
   username text unique not null,
   full_name text not null,
   avatar_url text,
@@ -126,6 +128,8 @@ create table if not exists public.profiles (
   posts_count integer default 0,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+create index if not exists idx_profiles_user_id on public.profiles(user_id);
+create index if not exists idx_profiles_google_email on public.profiles(google_email);
 
 -- 2. Tabela de Seguidores
 create table if not exists public.followers (

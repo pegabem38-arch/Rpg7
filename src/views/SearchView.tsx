@@ -15,7 +15,7 @@ export const SearchView: React.FC<Props> = ({ onOpenProfile }) => {
 
   const [query, setQuery] = useState('');
   const activeProfile = store.getActiveProfile();
-  const allProfiles = store.getProfiles();
+  const allProfiles = store.getDiscoverableProfiles();
   const posts = store.getPosts();
 
   // Filter profiles based on search query

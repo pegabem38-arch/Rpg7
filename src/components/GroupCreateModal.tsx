@@ -40,8 +40,8 @@ export const GroupCreateModal: React.FC<Props> = ({
 
   const activeProfile = store.getActiveProfile();
   const availableProfiles = store
-    .getProfiles()
-    .filter((p) => p.id !== activeProfile.id);
+    .getDiscoverableProfiles()
+    .filter((p) => p.id !== activeProfile?.id);
   const myCommunities = store.getCommunities();
 
   const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>, target: 'group' | 'community') => {

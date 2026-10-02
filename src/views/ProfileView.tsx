@@ -32,8 +32,54 @@ export const ProfileView: React.FC<Props> = ({
   const effectiveIsAdmin = isAdmin ?? isAppAdmin(getStoredGoogleUser()?.email);
   const activeProfile = store.getActiveProfile();
   const targetId = profileId || activeProfile?.id;
-  const profile = store.getProfiles().find((p) => p.id === targetId || p.username === targetId) || activeProfile;
+  const profile = (profileId ? store.getProfileById(targetId) : activeProfile) || activeProfile;
   const isSelf = (activeProfile && profile) ? (activeProfile.id === profile.id || activeProfile.username === profile.username) : true;
+
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    return store.subscribe(() => setTick((t) => t + 1));
+  }, []);
+
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'posts' | 'reels' | 'saved'>('posts');
+  const [postViewMode, setPostViewMode] = useState<'grid' | 'feed'>('grid');
+  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [storyViewerOpen, setStoryViewerOpen] = useState(false);
+  const [followModalTitle, setFollowModalTitle] = useState<'Seguidores' | 'Seguindo' | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [bioMentionSuggestions, setBioMentionSuggestions] = useState<Profile[]>([]);
+  const bioInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Edit Profile State
+  const [editUsername, setEditUsername] = useState(profile?.username || '');
+  const [editFullName, setEditFullName] = useState(profile?.full_name || '');
+  const [editBio, setEditBio] = useState(profile?.bio || '');
+  const [editWebsite, setEditWebsite] = useState(profile?.website || '');
+  const [editAvatarUrl, setEditAvatarUrl] = useState(profile?.avatar_url || '');
+  const [editType, setEditType] = useState<ProfileType>(profile?.profile_type || 'pessoal');
+
+  // Proteção contra perfil inexistente
+  if (!profile) {
+    return (
+      <div className="max-w-md mx-auto px-4 py-24 text-center">
+        <div className="w-16 h-16 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-400 flex items-center justify-center mx-auto mb-4">
+          <User className="w-8 h-8" />
+        </div>
+        <h2 className="text-lg font-bold text-neutral-900 dark:text-white">Perfil não encontrado</h2>
+        <p className="text-xs text-neutral-500 mt-1">Este perfil não existe ou não está disponível.</p>
+        {activeProfile && (
+          <button
+            onClick={() => onOpenProfile(activeProfile.id)}
+            className="mt-6 px-4 py-2 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl font-bold text-xs"
+          >
+            Voltar ao Meu Perfil
+          </button>
+        )}
+      </div>
+    );
+  }
 
   // Outras contas não podem ver a conta logada com cedrico124i@gmail.com
   if (!effectiveIsAdmin && profile.google_email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
@@ -44,45 +90,21 @@ export const ProfileView: React.FC<Props> = ({
         </div>
         <h2 className="text-lg font-bold text-neutral-900 dark:text-white">Perfil não disponível</h2>
         <p className="text-xs text-neutral-500 mt-1">Este perfil não existe ou não está visível para sua conta.</p>
-        <button
-          onClick={() => onOpenProfile(activeProfile.id)}
-          className="mt-6 px-4 py-2 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl font-bold text-xs"
-        >
-          Voltar ao Meu Perfil
-        </button>
+        {activeProfile && (
+          <button
+            onClick={() => onOpenProfile(activeProfile.id)}
+            className="mt-6 px-4 py-2 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl font-bold text-xs"
+          >
+            Voltar ao Meu Perfil
+          </button>
+        )}
       </div>
     );
   }
 
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    return store.subscribe(() => setTick((t) => t + 1));
-  }, []);
-
   const isFollowing = store.isFollowing(profile.id);
-  const [reportModalOpen, setReportModalOpen] = useState(false);
-
-  const [activeTab, setActiveTab] = useState<'posts' | 'reels' | 'saved'>('posts');
-  const [postViewMode, setPostViewMode] = useState<'grid' | 'feed'>('grid');
-  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
-  const [storyViewerOpen, setStoryViewerOpen] = useState(false);
-
-  // User stories
-  const userStories = store.getStories().filter((s) => s.profile_id === profile.id);
+  const userStories = store.getStories().filter((s) => s && s.profile_id === profile.id);
   const hasUserStories = userStories.length > 0;
-  const [followModalTitle, setFollowModalTitle] = useState<'Seguidores' | 'Seguindo' | null>(null);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
-  const [bioMentionSuggestions, setBioMentionSuggestions] = useState<Profile[]>([]);
-  const bioInputRef = useRef<HTMLTextAreaElement | null>(null);
-
-  // Edit Profile State
-  const [editUsername, setEditUsername] = useState(profile.username);
-  const [editFullName, setEditFullName] = useState(profile.full_name);
-  const [editBio, setEditBio] = useState(profile.bio);
-  const [editWebsite, setEditWebsite] = useState(profile.website || '');
-  const [editAvatarUrl, setEditAvatarUrl] = useState(profile.avatar_url);
-  const [editType, setEditType] = useState<ProfileType>(profile.profile_type);
 
   const handleDeleteProfile = () => {
     const result = store.deleteProfile(profile.id);
@@ -106,8 +128,6 @@ export const ProfileView: React.FC<Props> = ({
     setIsEditModalOpen(true);
   };
 
-  const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
-
   const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -122,35 +142,35 @@ export const ProfileView: React.FC<Props> = ({
   };
 
   // Content Filter: Um post pertence estritamente a este perfil se o profile_id corresponder ao ID deste perfil
-  const allPosts = store.getPosts();
+  const allPosts = store.getPosts() || [];
   const userPosts = allPosts.filter((p) => {
     if (!p) return false;
     // 1. Verificação rigorosa e prioritária pelo ID único do perfil
-    if (p.profile_id && profile.id) {
+    if (p.profile_id && profile?.id) {
       return p.profile_id === profile.id;
     }
     // 2. Se profile_id não estiver preenchido, verifica pelo ID do objeto profile
-    if (p.profile && p.profile.id && profile.id) {
+    if (p.profile && p.profile.id && profile?.id) {
       return p.profile.id === profile.id;
     }
     return false;
   });
 
-  const userReels = store.getReels().filter((r) => {
+  const userReels = (store.getReels() || []).filter((r) => {
     if (!r) return false;
-    if (r.profile_id && profile.id) {
+    if (r.profile_id && profile?.id) {
       return r.profile_id === profile.id;
     }
-    if (r.profile && r.profile.id && profile.id) {
+    if (r.profile && r.profile.id && profile?.id) {
       return r.profile.id === profile.id;
     }
     return false;
   });
-  const savedPosts = store.getSavedPosts();
+  const savedPosts = store.getSavedPosts() || [];
 
   // Follower/Following Lists
-  const followersList = store.getFollowers(profile.id);
-  const followingList = store.getFollowing(profile.id);
+  const followersList = profile?.id ? (store.getFollowers(profile.id) || []) : [];
+  const followingList = profile?.id ? (store.getFollowing(profile.id) || []) : [];
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();

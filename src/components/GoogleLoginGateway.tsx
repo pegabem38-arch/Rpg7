@@ -13,6 +13,7 @@ import {
   GoogleUser, 
   setStoredGoogleUser, 
   validateGmailAddress,
+  getOrCreateUserIdForEmail,
   ADMIN_EMAIL 
 } from '../services/googleAuth';
 import { GoogleLogo } from './GoogleSignInModal';
@@ -39,17 +40,19 @@ export const GoogleLoginGateway: React.FC<Props> = ({ onLogin }) => {
 
     setIsSubmitting(true);
     setTimeout(() => {
+      const cleanEmail = email.trim().toLowerCase();
+      const stableUid = getOrCreateUserIdForEmail(cleanEmail);
       const googleUser: GoogleUser = {
-        email: email.trim().toLowerCase(),
+        email: cleanEmail,
         name: name.trim() || 'Usuário Google',
-        picture: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(email)}`,
-        google_id: `g_${Date.now()}`,
+        picture: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(cleanEmail)}`,
+        google_id: stableUid,
         verified_email: true,
         login_at: new Date().toISOString()
       };
 
       setStoredGoogleUser(googleUser);
-      store.linkProfilesToGoogleUser(googleUser.email, googleUser.name);
+      store.handleUserLogin(googleUser);
       setIsSubmitting(false);
       onLogin(googleUser);
     }, 400);

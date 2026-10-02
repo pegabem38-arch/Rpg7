@@ -30,7 +30,7 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   profiles: Profile[];
-  activeProfile: Profile;
+  activeProfile?: Profile | null;
   onSelectProfile: (id: string) => void;
   onGoogleLogout?: () => void;
 }
@@ -108,7 +108,8 @@ export const AccountSwitcherModal: React.FC<Props> = ({
       website: website.trim(),
       profile_type: profileType,
       google_email: googleUser?.email,
-      google_name: googleUser?.name
+      google_name: googleUser?.name,
+      user_id: googleUser?.google_id
     });
 
     onSelectProfile(newProf.id);
@@ -122,6 +123,7 @@ export const AccountSwitcherModal: React.FC<Props> = ({
   };
 
   const handleLogoutGoogle = () => {
+    store.handleUserLogout();
     clearStoredGoogleUser();
     onClose();
     if (onGoogleLogout) {
@@ -212,7 +214,7 @@ export const AccountSwitcherModal: React.FC<Props> = ({
             {/* Profiles List */}
             <div className="space-y-2 overflow-y-auto pr-1 flex-1 max-h-72">
               {profiles.map((p) => {
-                const isActive = p.id === activeProfile.id;
+                const isActive = Boolean(activeProfile && p.id === activeProfile.id);
 
                 return (
                   <div

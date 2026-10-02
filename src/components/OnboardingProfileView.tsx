@@ -95,7 +95,8 @@ export const OnboardingProfileView: React.FC<OnboardingProfileViewProps> = ({
       website: website.trim(),
       profile_type: profileType,
       google_email: googleUser.email,
-      google_name: googleUser.name
+      google_name: googleUser.name,
+      user_id: googleUser.google_id
     });
 
     onCreated();

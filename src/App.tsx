@@ -59,6 +59,7 @@ export default function App() {
       <GoogleLoginGateway 
         onLogin={(user) => {
           setGoogleUser(user);
+          store.handleUserLogin(user);
           setTick((t) => t + 1);
         }} 
       />
@@ -72,6 +73,7 @@ export default function App() {
         googleUser={googleUser}
         onCreated={() => setTick((t) => t + 1)} 
         onLogout={() => {
+          store.handleUserLogout();
           setGoogleUser(null);
           setTick((t) => t + 1);
         }}
@@ -100,7 +102,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-neutral-100 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 font-sans antialiased selection:bg-rose-500 selection:text-white pb-20 md:pb-0">
       {/* Banned Profile Notice Banner (Sticky) */}
-      {activeProfile.banned && (
+      {activeProfile?.banned && (
         <div className="bg-red-600 text-white text-xs font-bold py-2.5 px-4 text-center sticky top-0 z-50 shadow-md flex items-center justify-center gap-2">
           <span>🚫 Atenção: Este perfil foi suspenso pela Administração do aplicativo. Ações de publicação e interação estão bloqueadas.</span>
         </div>
@@ -169,6 +171,7 @@ export default function App() {
           setViewedProfileId(undefined);
         }}
         onGoogleLogout={() => {
+          store.handleUserLogout();
           setGoogleUser(null);
           setTick((t) => t + 1);
         }}

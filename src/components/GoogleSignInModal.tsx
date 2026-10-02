@@ -5,8 +5,10 @@ import {
   validateGmailAddress, 
   setStoredGoogleUser,
   getStoredGoogleUser,
+  getOrCreateUserIdForEmail,
   ADMIN_EMAIL
 } from '../services/googleAuth';
+import { store } from '../services/store';
 
 // Authentic Google "G" 4-color SVG logo
 export const GoogleLogo: React.FC<{ className?: string }> = ({ className = 'w-5 h-5' }) => (
@@ -51,7 +53,7 @@ export const GoogleSignInModal: React.FC<Props> = ({ isOpen, onClose, onSuccess 
     email: 'j20749073@gmail.com',
     name: 'Usuário Google',
     picture: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-    google_id: 'google-usr-719734610674',
+    google_id: getOrCreateUserIdForEmail('j20749073@gmail.com'),
     verified_email: true,
     login_at: new Date().toISOString()
   };
@@ -60,6 +62,7 @@ export const GoogleSignInModal: React.FC<Props> = ({ isOpen, onClose, onSuccess 
     setIsLoading(true);
     setTimeout(() => {
       setStoredGoogleUser(user);
+      store.handleUserLogin(user);
       setIsLoading(false);
       onSuccess(user);
       onClose();
@@ -82,16 +85,18 @@ export const GoogleSignInModal: React.FC<Props> = ({ isOpen, onClose, onSuccess 
     setIsLoading(true);
 
     setTimeout(() => {
+      const stableUid = getOrCreateUserIdForEmail(trimmedEmail);
       const newUser: GoogleUser = {
         email: trimmedEmail,
         name: cleanName,
         picture: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(cleanName)}`,
-        google_id: `google-${Date.now()}`,
+        google_id: stableUid,
         verified_email: true,
         login_at: new Date().toISOString()
       };
 
       setStoredGoogleUser(newUser);
+      store.handleUserLogin(newUser);
       setIsLoading(false);
       onSuccess(newUser);
       onClose();

@@ -7,7 +7,7 @@ import {
   INITIAL_CHATS, INITIAL_NOTIFICATIONS
 } from './mockData';
 import { getSupabaseClient } from '../lib/supabase';
-import { getStoredGoogleUser, ADMIN_EMAIL, isAppAdmin } from './googleAuth';
+import { getStoredGoogleUser, ADMIN_EMAIL, isAppAdmin, GoogleUser, getOrCreateUserIdForEmail } from './googleAuth';
 import { compressImage, convertToPermanentDataUrl } from '../utils/imageCompressor';
 import { imageCache } from './imageCache';
 
@@ -95,15 +95,36 @@ function getInitialState(): StoreState {
   } catch (e) {}
 
   try {
-    const savedProfiles = localStorage.getItem('rpg_profiles_v2');
-    if (savedProfiles) {
-      const parsedProfiles = JSON.parse(savedProfiles);
-      if (Array.isArray(parsedProfiles) && parsedProfiles.length > 0) {
-        const existingIds = new Set(state.profiles.map((p) => p.id));
-        for (const p of parsedProfiles) {
-          if (!existingIds.has(p.id)) {
-            state.profiles.push(p);
-            existingIds.add(p.id);
+    const currentGoogleUser = getStoredGoogleUser();
+    const currentUid = currentGoogleUser?.google_id;
+    const currentEmail = currentGoogleUser?.email?.toLowerCase();
+
+    // Filtra perfis em state.profiles para garantir que apenas os do usuário autenticado sejam mantidos
+    if (currentGoogleUser && state.profiles.length > 0) {
+      state.profiles = state.profiles.filter((p) => {
+        if (!p) return false;
+        const matchesUid = Boolean(currentUid && p.user_id && p.user_id === currentUid);
+        const matchesEmail = Boolean(currentEmail && p.google_email && p.google_email.toLowerCase() === currentEmail);
+        return matchesUid || matchesEmail;
+      });
+    } else if (!currentGoogleUser) {
+      state.profiles = [];
+      state.activeProfileId = '';
+    }
+
+    // Carrega backup dedicado exclusivamente para a conta autenticada
+    if (currentGoogleUser) {
+      const userKey = currentUid || currentEmail;
+      const userSaved = localStorage.getItem('rpg_profiles_' + userKey);
+      if (userSaved) {
+        const parsedProfiles = JSON.parse(userSaved);
+        if (Array.isArray(parsedProfiles) && parsedProfiles.length > 0) {
+          const existingIds = new Set(state.profiles.map((p) => p.id));
+          for (const p of parsedProfiles) {
+            if (!existingIds.has(p.id)) {
+              state.profiles.push(p);
+              existingIds.add(p.id);
+            }
           }
         }
       }
@@ -134,8 +155,14 @@ function getInitialState(): StoreState {
     state.reports = [];
   }
 
-  if (!state.activeProfileId && state.profiles.length > 0) {
-    state.activeProfileId = state.profiles[0].id;
+  // Valida que o activeProfileId pertence a um perfil desta conta
+  if (state.profiles.length > 0) {
+    const activeBelongs = state.profiles.some((p) => p.id === state.activeProfileId);
+    if (!activeBelongs) {
+      state.activeProfileId = state.profiles[0].id;
+    }
+  } else {
+    state.activeProfileId = '';
   }
 
   if (!Array.isArray(state.communities)) {
@@ -148,6 +175,7 @@ function getInitialState(): StoreState {
 
 class Store {
   private state: StoreState = getInitialState();
+  private publicProfilesCache: Map<string, Profile> = new Map();
   private listeners: Set<() => void> = new Set();
   private isSqlSynced: boolean = false;
   private isSqlSyncing: boolean = true;
@@ -176,34 +204,36 @@ class Store {
 
   private saveState() {
     try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(this.state));
-      localStorage.setItem('rpg_posts_v2', JSON.stringify((this.state.posts || []).slice(0, 50)));
-      localStorage.setItem('rpg_profiles_v2', JSON.stringify(this.state.profiles || []));
-      localStorage.setItem('rpg_followers_v2', JSON.stringify(this.state.followers || []));
-      localStorage.setItem('rpg_reports_v2', JSON.stringify(this.state.reports || []));
-    } catch (e) {
-      console.warn('Armazenamento local excedeu quota. Limpando chaves antigas e salvando dados compactados...', e);
-      try {
-        localStorage.removeItem('instaconnect_state_v2');
-        localStorage.removeItem('rpg_state');
-        localStorage.removeItem('supabase.auth.token');
-
-        // Salvamento seguro com posts limitados e perfis prioritários
-        localStorage.setItem('rpg_profiles_v2', JSON.stringify(this.state.profiles || []));
-        const compactPosts = (this.state.posts || []).slice(0, 30);
-        localStorage.setItem('rpg_posts_v2', JSON.stringify(compactPosts));
-
-        const compacted = this.getCompactedState();
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(compacted));
-      } catch (err2) {
-        console.warn('Armazenamento ainda restrito, salvando apenas perfis prioritários...', err2);
+      const currentGoogleUser = getStoredGoogleUser();
+      const myProfs = this.getProfiles();
+      if (currentGoogleUser && myProfs.length > 0) {
+        const userKey = currentGoogleUser.google_id || currentGoogleUser.email.toLowerCase();
         try {
-          localStorage.removeItem('rpg_posts_v2');
-          localStorage.setItem('rpg_profiles_v2', JSON.stringify(this.state.profiles || []));
-        } catch (err3) {
-          console.warn('Aviso: Armazenamento local do navegador sem espaço disponível.', err3);
+          localStorage.setItem('rpg_profiles_' + userKey, JSON.stringify(myProfs));
+        } catch {}
+      }
+
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(this.state));
+        localStorage.setItem('rpg_posts_v2', JSON.stringify((this.state.posts || []).slice(0, 50)));
+        localStorage.setItem('rpg_profiles_v2', JSON.stringify(myProfs));
+        localStorage.setItem('rpg_followers_v2', JSON.stringify(this.state.followers || []));
+        localStorage.setItem('rpg_reports_v2', JSON.stringify(this.state.reports || []));
+      } catch (e) {
+        console.warn('Armazenamento local excedeu quota. Limpando chaves antigas e salvando dados compactados...', e);
+        try {
+          localStorage.removeItem('instaconnect_state_v2');
+          localStorage.removeItem('rpg_state');
+          localStorage.removeItem('supabase.auth.token');
+
+          const compacted = this.getCompactedState();
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(compacted));
+        } catch (err2) {
+          console.warn('Aviso: Armazenamento local do navegador sem espaço disponível.', err2);
         }
       }
+    } catch (globalErr) {
+      console.warn('Erro ao salvar estado:', globalErr);
     }
     this.notify();
   }
@@ -391,41 +421,54 @@ class Store {
     if (!supabase) return;
 
     try {
-      // 1. Check & Sync profiles from Supabase table
-      const { data: remoteProfiles, error } = await supabase.from('profiles').select('*').limit(100);
-      if (!error && remoteProfiles && remoteProfiles.length > 0) {
-        let changed = false;
-        remoteProfiles.forEach((rp: any) => {
-          // Identifica o perfil EXCLUSIVAMENTE pelo seu ID primário (UUID)!
-          // NUNCA associar perfis de contas diferentes apenas por terem usernames iguais!
-          const existingIdx = this.state.profiles.findIndex((p) => p.id === rp.id);
-          if (existingIdx === -1) {
-            this.state.profiles.push(rp);
-            changed = true;
-          } else {
-            // Atualiza dados apenas se for o mesmo perfil de ID idêntico
-            if (rp.avatar_url && rp.avatar_url !== this.state.profiles[existingIdx].avatar_url) {
-              this.state.profiles[existingIdx].avatar_url = rp.avatar_url;
-              changed = true;
-            }
-            if (rp.full_name && rp.full_name !== this.state.profiles[existingIdx].full_name) {
-              this.state.profiles[existingIdx].full_name = rp.full_name;
-              changed = true;
-            }
-            if (rp.bio !== undefined && rp.bio !== this.state.profiles[existingIdx].bio) {
-              this.state.profiles[existingIdx].bio = rp.bio;
-              changed = true;
-            }
-          }
-        });
-        if (changed) {
-          if (!this.state.activeProfileId && this.state.profiles.length > 0) {
-            this.state.activeProfileId = this.state.profiles[0].id;
-          }
-          this.saveState();
+      // 1. Consulta ao Supabase filtrada estritamente no backend pelo ID do usuário autenticado
+      const currentGoogleUser = getStoredGoogleUser();
+      if (currentGoogleUser) {
+        const currentUid = currentGoogleUser.google_id;
+        const currentEmail = currentGoogleUser.email?.toLowerCase();
+
+        let myRemoteProfiles: any[] | null = null;
+        let profErr: any = null;
+
+        if (currentUid && isValidUUID(currentUid)) {
+          const res = await supabase.from('profiles').select('*').eq('user_id', currentUid);
+          myRemoteProfiles = res.data;
+          profErr = res.error;
         }
-        // Salva avatares do SQL na memória RAM para acesso imediato
-        imageCache.cacheProfiles(remoteProfiles);
+
+        if ((!myRemoteProfiles || myRemoteProfiles.length === 0) && currentEmail) {
+          try {
+            const res = await supabase.from('profiles').select('*').eq('google_email', currentEmail);
+            if (!res.error && res.data && res.data.length > 0) {
+              myRemoteProfiles = res.data;
+            }
+          } catch {}
+        }
+
+        if (!profErr && myRemoteProfiles && myRemoteProfiles.length > 0) {
+          let changed = false;
+          myRemoteProfiles.forEach((rp: any) => {
+            const existingIdx = this.state.profiles.findIndex((p) => p.id === rp.id);
+            if (existingIdx === -1) {
+              this.state.profiles.push(rp);
+              changed = true;
+            } else {
+              this.state.profiles[existingIdx] = {
+                ...this.state.profiles[existingIdx],
+                ...rp
+              };
+              changed = true;
+            }
+          });
+          if (changed) {
+            const myProfs = this.getProfiles();
+            if (!this.state.activeProfileId && myProfs.length > 0) {
+              this.state.activeProfileId = myProfs[0].id;
+            }
+            this.saveState();
+          }
+          imageCache.cacheProfiles(myRemoteProfiles);
+        }
       }
 
       // 2. Check & Sync posts from Supabase table so publications never disappear on reload
@@ -438,12 +481,12 @@ class Store {
       if (!postErr && remotePosts && remotePosts.length > 0) {
         let postChanged = false;
 
-        // Pré-carrega perfis de autores remotos que ainda não constam no estado local
+        // Pré-carrega perfis de autores remotos para exibir seus nomes/avatares nos posts do Feed
         const missingAuthorIds = Array.from(
           new Set(
             remotePosts
               .map((rp: any) => rp.profile_id)
-              .filter((pid: string) => pid && !this.state.profiles.some((p) => p.id === pid))
+              .filter((pid: string) => pid && !this.publicProfilesCache.has(pid))
           )
         );
 
@@ -451,14 +494,12 @@ class Store {
           try {
             const { data: fetchedAuthors } = await supabase
               .from('profiles')
-              .select('*')
+              .select('id, user_id, username, full_name, avatar_url, bio, website, profile_type, verified, followers_count, following_count, posts_count, created_at')
               .in('id', missingAuthorIds);
 
             if (fetchedAuthors && fetchedAuthors.length > 0) {
               for (const fa of fetchedAuthors) {
-                if (!this.state.profiles.some((p) => p.id === fa.id)) {
-                  this.state.profiles.push(fa);
-                }
+                this.publicProfilesCache.set(fa.id, fa);
               }
               imageCache.cacheProfiles(fetchedAuthors);
             }
@@ -467,8 +508,8 @@ class Store {
 
         remotePosts.forEach((rp: any) => {
           const existingIdx = this.state.posts.findIndex((p) => p.id === rp.id);
-          // O autor DEVE corresponder estritamente ao profile_id do post! NUNCA atribuir ao perfil logado!
-          const realAuthor = this.state.profiles.find((p) => p.id === rp.profile_id);
+          // O autor DEVE corresponder estritamente ao profile_id do post!
+          const realAuthor = this.getProfileById(rp.profile_id);
           const author: Profile = realAuthor || {
             id: rp.profile_id,
             user_id: rp.profile_id,
@@ -585,8 +626,9 @@ class Store {
       }
 
       // 2. Upsert do perfil utilizando o ID único do perfil
-      const { error } = await supabase.from('profiles').upsert({
+      const payload: Record<string, any> = {
         id: profile.id,
+        user_id: profile.user_id,
         username: profile.username.toLowerCase(),
         full_name: profile.full_name,
         avatar_url: profile.avatar_url,
@@ -598,7 +640,18 @@ class Store {
         following_count: profile.following_count || 0,
         posts_count: profile.posts_count || 0,
         created_at: profile.created_at || new Date().toISOString()
-      });
+      };
+      if (profile.google_email) payload.google_email = profile.google_email;
+      if (profile.google_name) payload.google_name = profile.google_name;
+
+      let { error } = await supabase.from('profiles').upsert(payload);
+      if (error && (error as any).code === 'PGRST204') {
+        // Schema cache não possui google_email/google_name, salva com colunas essenciais
+        delete payload.google_email;
+        delete payload.google_name;
+        const retry = await supabase.from('profiles').upsert(payload);
+        error = retry.error;
+      }
 
       if (error) {
         console.warn('Aviso ao sincronizar perfil no Supabase:', error);
@@ -652,34 +705,50 @@ class Store {
   }
 
   // --- PROFILES & ACCOUNT CONTEXT ---
+  /**
+   * Retorna estritamente os perfis pertencentes ao usuário autenticado.
+   * Contas diferentes NUNCA podem visualizar os perfis umas das outras.
+   */
   public getProfiles(): Profile[] {
     const currentGoogleUser = getStoredGoogleUser();
-    const isAdmin = isAppAdmin(currentGoogleUser?.email);
-    if (isAdmin) {
-      return this.state.profiles;
-    }
-    // Outras contas não podem ver a conta logada com cedrico124i@gmail.com
-    return this.state.profiles.filter(
-      (p) => p.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()
-    );
+    if (!currentGoogleUser) return [];
+
+    const currentUid = currentGoogleUser.google_id;
+    const currentEmail = currentGoogleUser.email?.toLowerCase();
+
+    return (this.state.profiles || []).filter((p) => {
+      if (!p) return false;
+      // Perfil deve pertencer estritamente a este usuário (UID ou e-mail)
+      const matchesUid = Boolean(currentUid && p.user_id && p.user_id === currentUid);
+      const matchesEmail = Boolean(currentEmail && p.google_email && p.google_email.toLowerCase() === currentEmail);
+      
+      // Dados antigos ou sem dono NÃO são expostos a usuários comuns
+      return matchesUid || matchesEmail;
+    });
   }
 
   public getActiveProfile(): Profile | undefined {
-    const currentGoogleUser = getStoredGoogleUser();
-    const isAdmin = isAppAdmin(currentGoogleUser?.email);
-    const visibleProfiles = isAdmin
-      ? this.state.profiles
-      : this.state.profiles.filter((p) => p.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase());
+    const myProfiles = this.getProfiles();
+    if (myProfiles.length === 0) return undefined;
 
-    const active = visibleProfiles.find((p) => p.id === this.state.activeProfileId);
-    return active || visibleProfiles[0];
+    // Se o activeProfileId atual pertence ao usuário autenticado, usa ele
+    const active = myProfiles.find((p) => p.id === this.state.activeProfileId);
+    if (active) return active;
+
+    // Fallback seguro: primeiro perfil DO PRÓPRIO USUÁRIO
+    return myProfiles[0];
   }
 
-  public switchProfile(profileId: string) {
-    if (this.state.profiles.some((p) => p.id === profileId)) {
-      this.state.activeProfileId = profileId;
+  public switchProfile(profileId: string): boolean {
+    const myProfiles = this.getProfiles();
+    const target = myProfiles.find((p) => p.id === profileId);
+    if (target) {
+      this.state.activeProfileId = target.id;
       this.saveState();
+      return true;
     }
+    console.warn('Bloqueado: Não é permitido alternar para um perfil de outra conta.');
+    return false;
   }
 
   public createProfile(data: {
@@ -691,16 +760,17 @@ class Store {
     profile_type: ProfileType;
     google_email?: string;
     google_name?: string;
+    user_id?: string;
   }): Profile {
-    const activeUser = this.getActiveProfile();
     const currentGoogleUser = getStoredGoogleUser();
-    const finalGoogleEmail = data.google_email || currentGoogleUser?.email;
+    const cleanEmail = (data.google_email || currentGoogleUser?.email || '').trim().toLowerCase();
+    const finalUserId = data.user_id || currentGoogleUser?.google_id || (cleanEmail ? getOrCreateUserIdForEmail(cleanEmail) : generateUUID());
     const finalGoogleName = data.google_name || currentGoogleUser?.name;
 
     const newProfile: Profile = {
       id: generateUUID(),
-      user_id: activeUser ? activeUser.user_id : `user-${Date.now()}`,
-      google_email: finalGoogleEmail,
+      user_id: finalUserId,
+      google_email: cleanEmail,
       google_name: finalGoogleName,
       username: data.username.toLowerCase().replace(/[^a-z0-9._]/g, ''),
       full_name: data.full_name,
@@ -716,28 +786,192 @@ class Store {
     };
 
     this.state.profiles.push(newProfile);
-    this.state.activeProfileId = newProfile.id; // Automatically switch to newly created profile
+    this.state.activeProfileId = newProfile.id; // Alterna automaticamente para o perfil recém-criado
     this.saveState();
     this.saveProfileToSupabase(newProfile);
     return newProfile;
   }
 
-  public linkProfilesToGoogleUser(email: string, name: string) {
-    let changed = false;
-    this.state.profiles.forEach((p) => {
-      if (!p.google_email) {
-        p.google_email = email;
-        p.google_name = name;
-        changed = true;
+  public handleUserLogout() {
+    const currentGoogleUser = getStoredGoogleUser();
+    if (currentGoogleUser) {
+      // 1. Salva com segurança todos os perfis da conta no backup isolado antes de deslogar
+      const myProfs = this.getProfiles();
+      const userKey = currentGoogleUser.google_id || currentGoogleUser.email?.toLowerCase();
+      if (userKey && myProfs.length > 0) {
+        try {
+          localStorage.setItem('rpg_profiles_' + userKey, JSON.stringify(myProfs));
+        } catch {}
       }
-    });
-    if (changed) {
-      this.saveState();
+
+      // 2. Remove da memória ativa os perfis da conta que acabou de sair
+      const currentUid = currentGoogleUser.google_id;
+      const currentEmail = currentGoogleUser.email?.toLowerCase();
+      this.state.profiles = (this.state.profiles || []).filter(
+        (p) => !(p.user_id === currentUid || (currentEmail && p.google_email?.toLowerCase() === currentEmail))
+      );
+    }
+
+    this.state.activeProfileId = '';
+
+    // Salva o estado sem sobrescrever a chave de perfis do usuário
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(this.state));
+      localStorage.setItem('rpg_posts_v2', JSON.stringify((this.state.posts || []).slice(0, 50)));
+      localStorage.setItem('rpg_profiles_v2', JSON.stringify([]));
+    } catch {}
+
+    this.notify();
+  }
+
+  public async handleUserLogin(user: GoogleUser) {
+    const cleanEmail = user.email.trim().toLowerCase();
+    const uid = user.google_id || getOrCreateUserIdForEmail(cleanEmail);
+
+    // 1. Carrega backup local salvo para este usuário específico
+    const userStorageKey = 'rpg_profiles_' + (uid || cleanEmail);
+    const userSaved = localStorage.getItem(userStorageKey);
+    if (userSaved) {
+      try {
+        const parsed = JSON.parse(userSaved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          for (const cp of parsed) {
+            if (!this.state.profiles.some((p) => p.id === cp.id)) {
+              this.state.profiles.push(cp);
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 2. Define o activeProfileId para um perfil pertencente a esta conta
+    const myProfiles = this.getProfiles();
+    if (myProfiles.length > 0) {
+      this.state.activeProfileId = myProfiles[0].id;
+    } else {
+      this.state.activeProfileId = '';
+    }
+
+    this.saveState();
+    this.notify();
+
+    // 3. Consulta ao Supabase com filtro obrigatório no backend por UID do usuário autenticado
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        let remoteProfs: any[] | null = null;
+        if (uid && isValidUUID(uid)) {
+          const res = await supabase.from('profiles').select('*').eq('user_id', uid);
+          remoteProfs = res.data;
+        }
+
+        if ((!remoteProfs || remoteProfs.length === 0) && cleanEmail) {
+          try {
+            const res = await supabase.from('profiles').select('*').eq('google_email', cleanEmail);
+            if (!res.error && res.data && res.data.length > 0) {
+              remoteProfs = res.data;
+            }
+          } catch {}
+        }
+
+        if (remoteProfs && remoteProfs.length > 0) {
+          for (const rp of remoteProfs) {
+            const idx = this.state.profiles.findIndex((p) => p.id === rp.id);
+            if (idx === -1) {
+              this.state.profiles.push(rp);
+            } else {
+              this.state.profiles[idx] = { ...this.state.profiles[idx], ...rp };
+            }
+          }
+          const updatedMyProfiles = this.getProfiles();
+          if (updatedMyProfiles.length > 0 && !this.state.activeProfileId) {
+            this.state.activeProfileId = updatedMyProfiles[0].id;
+          }
+          this.saveState();
+          this.notify();
+          imageCache.cacheProfiles(remoteProfs);
+        }
+      } catch (err) {
+        console.warn('Erro ao carregar perfis do usuário no Supabase:', err);
+      }
     }
   }
 
+  public getProfileById(profileIdOrUsername?: string): Profile | undefined {
+    if (!profileIdOrUsername) return undefined;
+    const target = profileIdOrUsername.toLowerCase().trim();
+
+    // 1. Busca nos perfis do usuário
+    const myProfile = this.state.profiles.find(
+      (p) => p.id === target || p.username.toLowerCase() === target
+    );
+    if (myProfile) return myProfile;
+
+    // 2. Busca no cache de perfis públicos
+    const publicProfile = Array.from(this.publicProfilesCache.values()).find(
+      (p) => p.id === target || p.username.toLowerCase() === target
+    );
+    if (publicProfile) return publicProfile;
+
+    // 3. Busca em posts/stories carregados
+    const postWithAuthor = this.state.posts.find(
+      (p) => p.profile_id === target || p.profile?.username?.toLowerCase() === target
+    );
+    if (postWithAuthor?.profile) return postWithAuthor.profile;
+
+    return undefined;
+  }
+
+  public getDiscoverableProfiles(): Profile[] {
+    const activeProfile = this.getActiveProfile();
+    const myId = activeProfile?.id;
+    const list: Profile[] = [];
+    const seen = new Set<string>();
+
+    if (myId) seen.add(myId);
+
+    // Perfis do cache público
+    for (const p of this.publicProfilesCache.values()) {
+      if (!seen.has(p.id) && p.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+        seen.add(p.id);
+        list.push(p);
+      }
+    }
+
+    // Autores de posts já carregados
+    for (const post of this.state.posts) {
+      if (post.profile && !seen.has(post.profile.id) && post.profile.id !== myId) {
+        if (post.profile.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+          seen.add(post.profile.id);
+          list.push(post.profile);
+        }
+      }
+    }
+
+    return list;
+  }
+
+  public getAllProfilesForAdmin(): Profile[] {
+    const currentGoogleUser = getStoredGoogleUser();
+    if (!isAppAdmin(currentGoogleUser?.email)) return [];
+    return this.state.profiles;
+  }
+
   public updateActiveProfile(data: Partial<Profile>) {
-    const activeId = this.state.activeProfileId;
+    const active = this.getActiveProfile();
+    if (!active) return;
+
+    const currentGoogleUser = getStoredGoogleUser();
+    if (!currentGoogleUser) return;
+    const currentUid = currentGoogleUser.google_id;
+    const currentEmail = currentGoogleUser.email?.toLowerCase();
+    const isOwner = (currentUid && active.user_id === currentUid) || (currentEmail && active.google_email?.toLowerCase() === currentEmail);
+    if (!isOwner) {
+      console.warn('Bloqueado: Não é permitido alterar um perfil de outra conta.');
+      return;
+    }
+
+    const activeId = active.id;
     this.state.profiles = this.state.profiles.map((p) => {
       if (p.id === activeId) {
         return { ...p, ...data };
@@ -766,7 +1000,7 @@ class Store {
   }
 
   public getAllProfiles(): Profile[] {
-    return this.state.profiles;
+    return this.getProfiles();
   }
 
   public isProfileBanned(profileId?: string): boolean {
@@ -776,6 +1010,20 @@ class Store {
   }
 
   public updateProfileById(profileId: string, data: Partial<Profile>): Profile | null {
+    const currentGoogleUser = getStoredGoogleUser();
+    const isAdmin = isAppAdmin(currentGoogleUser?.email);
+    const currentUid = currentGoogleUser?.google_id;
+    const currentEmail = currentGoogleUser?.email?.toLowerCase();
+
+    const targetProfile = this.state.profiles.find((p) => p.id === profileId);
+    if (!targetProfile) return null;
+
+    const isOwner = (currentUid && targetProfile.user_id === currentUid) || (currentEmail && targetProfile.google_email?.toLowerCase() === currentEmail);
+    if (!isOwner && !isAdmin) {
+      console.warn('Bloqueado: Não é permitido alterar um perfil de outra conta.');
+      return null;
+    }
+
     let updatedProfile: Profile | null = null;
     this.state.profiles = this.state.profiles.map((p) => {
       if (p.id === profileId) {
@@ -1040,9 +1288,22 @@ class Store {
   }
 
   public deleteProfile(profileId: string): { success: boolean; remainingCount: number } {
+    const currentGoogleUser = getStoredGoogleUser();
+    if (!currentGoogleUser) return { success: false, remainingCount: 0 };
+
+    const currentUid = currentGoogleUser.google_id;
+    const currentEmail = currentGoogleUser.email?.toLowerCase();
+    const isAdmin = isAppAdmin(currentEmail);
+
     const profileToDelete = this.state.profiles.find((p) => p.id === profileId);
     if (!profileToDelete) {
-      return { success: false, remainingCount: this.state.profiles.length };
+      return { success: false, remainingCount: this.getProfiles().length };
+    }
+
+    const isOwner = (currentUid && profileToDelete.user_id === currentUid) || (currentEmail && profileToDelete.google_email?.toLowerCase() === currentEmail);
+    if (!isOwner && !isAdmin) {
+      console.warn('Bloqueado: Não é permitido excluir o perfil de outro usuário.');
+      return { success: false, remainingCount: this.getProfiles().length };
     }
 
     // 1. Remove profile from list
@@ -1067,12 +1328,21 @@ class Store {
       (n) => n.recipient_profile_id !== profileId && n.actor_profile?.id !== profileId
     );
 
-    // 7. If the deleted profile was the active one, switch to another profile or empty string
+    // 7. If the deleted profile was the active one, switch to another profile belonging to this account
+    const remainingMyProfiles = this.getProfiles();
     if (this.state.activeProfileId === profileId) {
-      this.state.activeProfileId = this.state.profiles.length > 0 ? this.state.profiles[0].id : '';
+      this.state.activeProfileId = remainingMyProfiles.length > 0 ? remainingMyProfiles[0].id : '';
     }
 
     // 8. Save state
+    if (currentGoogleUser) {
+      const userKey = currentGoogleUser.google_id || currentGoogleUser.email?.toLowerCase();
+      if (userKey) {
+        try {
+          localStorage.setItem('rpg_profiles_' + userKey, JSON.stringify(remainingMyProfiles));
+        } catch {}
+      }
+    }
     this.saveState();
 
     // 9. Sync deletion with Supabase if connected
@@ -1084,7 +1354,7 @@ class Store {
       Promise.resolve(supabase.from('reels').delete().eq('profile_id', profileId)).catch(() => {});
     }
 
-    return { success: true, remainingCount: this.state.profiles.length };
+    return { success: true, remainingCount: remainingMyProfiles.length };
   }
 
   // --- FOLLOW SYSTEM ---
@@ -1329,10 +1599,10 @@ class Store {
     const currentGoogleUser = getStoredGoogleUser();
     const isAdmin = isAppAdmin(currentGoogleUser?.email);
     if (isAdmin) {
-      return this.state.posts;
+      return this.state.posts || [];
     }
-    return this.state.posts.filter(
-      (p) => p.profile?.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()
+    return (this.state.posts || []).filter(
+      (p) => p && p.profile?.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()
     );
   }
 
@@ -1435,19 +1705,21 @@ class Store {
   }
 
   public getSavedPosts(): Post[] {
-    return this.state.posts.filter((p) => this.state.savedPostIds.includes(p.id));
+    const savedIds = Array.isArray(this.state.savedPostIds) ? this.state.savedPostIds : [];
+    return (this.state.posts || []).filter((p) => p && savedIds.includes(p.id));
   }
 
   public repostPost(originalPostId: string, quoteCaption?: string): Post | null {
-    const originalPost = this.state.posts.find((p) => p.id === originalPostId);
+    const originalPost = (this.state.posts || []).find((p) => p && p.id === originalPostId);
     if (!originalPost) return null;
 
     const activeProfile = this.getActiveProfile();
+    if (!activeProfile) return null;
     const targetPost = originalPost.repost_of || originalPost;
 
     // Check if current user already reposted this post
-    const existingIndex = this.state.posts.findIndex(
-      (p) => p.profile_id === activeProfile.id && p.repost_of?.id === targetPost.id
+    const existingIndex = (this.state.posts || []).findIndex(
+      (p) => p && p.profile_id === activeProfile.id && p.repost_of?.id === targetPost.id
     );
 
     if (existingIndex >= 0 && !quoteCaption) {
@@ -1770,9 +2042,10 @@ class Store {
     const currentGoogleUser = getStoredGoogleUser();
     const isAdmin = isAppAdmin(currentGoogleUser?.email);
     const nowIso = new Date().toISOString();
-    return this.state.stories.filter((story) => {
+    return (this.state.stories || []).filter((story) => {
+      if (!story) return false;
       // Outras contas não podem ver a conta logada com cedrico124i@gmail.com
-      if (!isAdmin && story.profile.google_email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
+      if (!isAdmin && story.profile?.google_email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
         return false;
       }
       // Stories possuem limite automático de 24 horas (caso o autor não delete antes)
@@ -1864,10 +2137,10 @@ class Store {
     const currentGoogleUser = getStoredGoogleUser();
     const isAdmin = isAppAdmin(currentGoogleUser?.email);
     if (isAdmin) {
-      return this.state.reels;
+      return this.state.reels || [];
     }
-    return this.state.reels.filter(
-      (r) => r.profile.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()
+    return (this.state.reels || []).filter(
+      (r) => r && r.profile?.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()
     );
   }
 
@@ -1921,24 +2194,28 @@ class Store {
   // --- DIRECT MESSAGES & GROUPS ---
   public getChats(): Chat[] {
     const activeId = this.state.activeProfileId;
+    if (!this.state.chats || !Array.isArray(this.state.chats)) return [];
     return this.state.chats.filter((c) =>
-      c.participants.some((p) => p.id === activeId)
+      c && Array.isArray(c.participants) && c.participants.some((p) => p && p.id === activeId)
     );
   }
 
   public getOrCreateDirectChat(targetProfileId: string): Chat {
     const activeProfile = this.getActiveProfile();
-    const targetProfile = this.state.profiles.find((p) => p.id === targetProfileId);
+    const targetProfile = this.state.profiles.find((p) => p && p.id === targetProfileId);
 
+    if (!activeProfile) throw new Error('É necessário ter um perfil ativo para iniciar uma conversa.');
     if (!targetProfile) throw new Error('Perfil de destino não encontrado.');
 
     // Look for existing 1-on-1 chat
-    const existing = this.state.chats.find(
+    const existing = (this.state.chats || []).find(
       (c) =>
+        c &&
         !c.is_group &&
+        Array.isArray(c.participants) &&
         c.participants.length === 2 &&
-        c.participants.some((p) => p.id === activeProfile.id) &&
-        c.participants.some((p) => p.id === targetProfileId)
+        c.participants.some((p) => p && p.id === activeProfile.id) &&
+        c.participants.some((p) => p && p.id === targetProfileId)
     );
 
     if (existing) return existing;
@@ -2034,17 +2311,18 @@ class Store {
   // --- COMMUNITIES (COMUNIDADES COM MÚLTIPLOS GRUPOS) ---
   public getCommunities(): Community[] {
     const activeId = this.state.activeProfileId;
-    return (this.state.communities || []).filter(
-      (c) => c.created_by === activeId || c.member_profile_ids.includes(activeId)
+    if (!this.state.communities || !Array.isArray(this.state.communities)) return [];
+    return this.state.communities.filter((c) =>
+      c && (c.created_by === activeId || (Array.isArray(c.member_profile_ids) && c.member_profile_ids.includes(activeId)))
     );
   }
 
   public getCommunity(communityId: string): Community | undefined {
-    return (this.state.communities || []).find((c) => c.id === communityId);
+    return (this.state.communities || []).find((c) => c && c.id === communityId);
   }
 
   public getCommunityGroups(communityId: string): Chat[] {
-    return this.state.chats.filter((c) => c.community_id === communityId);
+    return (this.state.chats || []).filter((c) => c && c.community_id === communityId);
   }
 
   public createCommunity(data: {
@@ -2645,15 +2923,15 @@ class Store {
   // --- NOTIFICATIONS ---
   public getNotifications(): AppNotification[] {
     const activeId = this.state.activeProfileId;
-    return this.state.notifications.filter((n) => n.recipient_profile_id === activeId);
+    return (this.state.notifications || []).filter((n) => n && n.recipient_profile_id === activeId);
   }
 
   public getUnreadNotificationCount(): number {
-    return this.getNotifications().filter((n) => !n.is_read).length;
+    return this.getNotifications().filter((n) => n && !n.is_read).length;
   }
 
   public getUnreadChatCount(): number {
-    return this.getChats().reduce((acc, chat) => acc + (chat.unread_count || 0), 0);
+    return this.getChats().reduce((acc, chat) => acc + (chat?.unread_count || 0), 0);
   }
 
   private addNotification(data: {

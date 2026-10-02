@@ -61,10 +61,10 @@ export const FeedView: React.FC<Props> = ({
 
   const posts = store.getPosts() || [];
   const stories = store.getStories() || [];
-  const allProfiles = store.getProfiles() || [];
+  const myProfiles = store.getProfiles() || [];
 
   // Fallback seguro de perfil ativo caso ainda esteja carregando
-  const activeProfile = store.getActiveProfile() || allProfiles[0] || ({
+  const activeProfile = store.getActiveProfile() || myProfiles[0] || ({
     id: 'guest',
     user_id: 'guest',
     username: 'aventureiro',
@@ -82,8 +82,8 @@ export const FeedView: React.FC<Props> = ({
   const [storyViewerOpen, setStoryViewerOpen] = useState(false);
   const [selectedStoryIndex, setSelectedStoryIndex] = useState(0);
 
-  // Sugestões excluindo a si mesmo
-  const suggestions = allProfiles.filter((p) => p && p.id && p.id !== activeProfile.id);
+  // Sugestões para seguir de perfis públicos da comunidade
+  const suggestions = store.getDiscoverableProfiles().filter((p) => p && p.id && p.id !== activeProfile.id);
 
   const handleOpenStory = (index: number) => {
     setSelectedStoryIndex(index);

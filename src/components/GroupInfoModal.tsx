@@ -51,7 +51,7 @@ export const GroupInfoModal: React.FC<Props> = ({
 
   // Candidates to add to this group: all profiles that are not already participants
   const existingParticipantIds = chat.participants.map((p) => p.id);
-  const candidateProfiles = store.getProfiles().filter(
+  const candidateProfiles = store.getDiscoverableProfiles().filter(
     (p) => !existingParticipantIds.includes(p.id)
   );
 

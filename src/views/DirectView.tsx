@@ -91,7 +91,7 @@ export const DirectView: React.FC<Props> = ({ onOpenProfile }) => {
     setTimeout(() => setToastFeedback(null), 2000);
   };
 
-  const otherProfiles = store.getProfiles().filter((p) => p.id !== activeProfile?.id);
+  const otherProfiles = store.getDiscoverableProfiles().filter((p) => p.id !== activeProfile?.id);
 
   const matchingProfiles = searchTerm.trim()
     ? otherProfiles.filter(
@@ -294,14 +294,14 @@ export const DirectView: React.FC<Props> = ({ onOpenProfile }) => {
 
   const getChatDisplayName = (chat: Chat) => {
     if (chat.is_group) return chat.name || 'Grupo';
-    const otherParticipant = chat.participants.find((p) => p.id !== activeProfile.id);
+    const otherParticipant = chat.participants?.find((p) => p && p.id !== activeProfile?.id);
     return otherParticipant ? otherParticipant.full_name : 'Conversa';
   };
 
   const getChatAvatar = (chat: Chat) => {
     if (chat.is_group) return chat.avatar_url || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=300&auto=format&fit=crop&q=80';
-    const otherParticipant = chat.participants.find((p) => p.id !== activeProfile.id);
-    return otherParticipant ? otherParticipant.avatar_url : activeProfile.avatar_url;
+    const otherParticipant = chat.participants?.find((p) => p && p.id !== activeProfile?.id);
+    return otherParticipant?.avatar_url || activeProfile?.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80';
   };
 
   const filteredChats = chats.filter((c) => {
@@ -331,7 +331,7 @@ export const DirectView: React.FC<Props> = ({ onOpenProfile }) => {
         <div className="p-4 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="font-extrabold text-base text-neutral-900 dark:text-white">
-              @{activeProfile.username}
+              @{activeProfile?.username || 'meu_perfil'}
             </span>
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-300">
               Direct
@@ -434,7 +434,7 @@ export const DirectView: React.FC<Props> = ({ onOpenProfile }) => {
               ) : (
                 filteredCommunities.map((comm) => {
                   const commGroups = store.getCommunityGroups(comm.id);
-                  const isUserCreator = comm.created_by === activeProfile.id;
+                  const isUserCreator = Boolean(activeProfile && comm.created_by === activeProfile.id);
 
                   return (
                     <div
@@ -764,8 +764,8 @@ export const DirectView: React.FC<Props> = ({ onOpenProfile }) => {
                 </button>
 
                 {(() => {
-                  const otherParticipant = !selectedChat.is_group
-                    ? selectedChat.participants.find((p) => p.id !== activeProfile.id)
+                  const otherParticipant = !selectedChat.is_group && selectedChat.participants
+                    ? selectedChat.participants.find((p) => p && p.id !== activeProfile?.id)
                     : null;
 
                   return (
@@ -889,7 +889,7 @@ export const DirectView: React.FC<Props> = ({ onOpenProfile }) => {
                     </div>
                   ) : (
                     messages.map((msg) => {
-                      const isSelf = msg.sender_id === activeProfile.id;
+                      const isSelf = Boolean(activeProfile && msg.sender_id === activeProfile.id);
 
                       return (
                         <div
