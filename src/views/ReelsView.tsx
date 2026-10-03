@@ -14,7 +14,7 @@ export const ReelsView: React.FC<Props> = ({ onOpenProfile }) => {
     return store.subscribe(() => setTick((t) => t + 1));
   }, []);
 
-  const reels = store.getReels();
+  const reels = store.getReels() || [];
   const [activeReelIndex, setActiveReelIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(true);
   const [activeCommentsReelId, setActiveCommentsReelId] = useState<string | null>(null);
@@ -51,7 +51,19 @@ export const ReelsView: React.FC<Props> = ({ onOpenProfile }) => {
 
   const activeProfile = store.getActiveProfile();
   const isSelf = activeProfile ? activeProfile.id === activeReel.profile_id : false;
-  const isFollowing = store.isFollowing(activeReel.profile_id);
+  const isFollowing = activeReel.profile_id ? store.isFollowing(activeReel.profile_id) : false;
+  const reelAuthor = activeReel.profile || store.getProfileById(activeReel.profile_id) || {
+    id: activeReel.profile_id || 'unknown',
+    username: 'aventureiro',
+    avatar_url: '',
+    full_name: 'Aventureiro',
+    profile_type: 'pessoal' as const,
+    verified: false,
+    followers_count: 0,
+    following_count: 0,
+    posts_count: 0,
+    created_at: new Date().toISOString()
+  };
 
   return (
     <div className="flex items-center justify-center min-h-[calc(100vh-4rem)] p-0 sm:p-4 bg-neutral-950">
@@ -94,8 +106,8 @@ export const ReelsView: React.FC<Props> = ({ onOpenProfile }) => {
             {/* User Info & Follow */}
             <div className="flex items-center gap-2.5">
               <img
-                src={activeReel.profile.avatar_url}
-                alt={activeReel.profile.username}
+                src={reelAuthor.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80'}
+                alt={reelAuthor.username}
                 onClick={() => onOpenProfile(activeReel.profile_id)}
                 className="w-10 h-10 rounded-full object-cover border-2 border-rose-500 cursor-pointer"
               />
@@ -103,7 +115,7 @@ export const ReelsView: React.FC<Props> = ({ onOpenProfile }) => {
                 onClick={() => onOpenProfile(activeReel.profile_id)}
                 className="font-bold text-sm text-white cursor-pointer hover:underline"
               >
-                @{activeReel.profile.username}
+                @{reelAuthor.username}
               </span>
 
               {!isSelf && (

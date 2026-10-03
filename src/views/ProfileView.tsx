@@ -647,7 +647,6 @@ export const ProfileView: React.FC<Props> = ({
                   src={post.media_url}
                   cacheKey={`post_${post.id}`}
                   alt=""
-                  preferBlobUrl={true}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                 />
                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white font-bold text-xs gap-2 p-2">

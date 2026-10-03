@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Heart, MessageCircle, Send, Bookmark, MoreHorizontal, MapPin, UserPlus, UserCheck, Trash2, Repeat2, Music, Volume2, VolumeX, Flag, Image as ImageIcon
 } from 'lucide-react';
-import { Post } from '../types';
+import { Post, Profile } from '../types';
 import { store } from '../services/store';
 import { getStoredGoogleUser, isAppAdmin } from '../services/googleAuth';
 import { CommentsDrawer } from './CommentsDrawer';
@@ -10,6 +10,11 @@ import { RepostModal } from './RepostModal';
 import { MentionText } from './MentionText';
 import { ReportProfileModal } from './ReportProfileModal';
 import { CachedImage } from './CachedImage';
+
+function isValidYouTubeId(id?: string): boolean {
+  if (!id || typeof id !== 'string') return false;
+  return /^[a-zA-Z0-9_-]{11}$/.test(id.trim());
+}
 
 interface Props {
   post: Post;
@@ -36,7 +41,7 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
   const [showRepostModal, setShowRepostModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [repostFeedback, setRepostFeedback] = useState<string | null>(null);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
   const [isInView, setIsInView] = useState(false);
   const postContainerRef = useRef<HTMLElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -44,48 +49,41 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
   // Auto-play music when post enters viewport, stop when scrolled away
   useEffect(() => {
     if (!post.youtube_track || !postContainerRef.current) return;
+    if (typeof window === 'undefined' || !window.IntersectionObserver) return;
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (entry) {
-          setIsInView(entry.isIntersecting && entry.intersectionRatio >= 0.35);
+    let observer: IntersectionObserver | null = null;
+    try {
+      observer = new IntersectionObserver(
+        (entries) => {
+          try {
+            const entry = entries[0];
+            if (entry) {
+              setIsInView(Boolean(entry.isIntersecting && entry.intersectionRatio >= 0.35));
+            }
+          } catch {
+            // Ignore observer callback error
+          }
+        },
+        {
+          threshold: [0, 0.35, 0.7],
         }
-      },
-      {
-        threshold: [0, 0.35, 0.7],
-      }
-    );
+      );
 
-    observer.observe(postContainerRef.current);
-    return () => observer.disconnect();
+      observer.observe(postContainerRef.current);
+    } catch {
+      // Fallback: don't auto-play if observer fails to initialize
+    }
+
+    return () => {
+      try {
+        if (observer) observer.disconnect();
+      } catch {}
+    };
   }, [post.youtube_track]);
 
   const toggleVolume = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const nextMuted = !isMuted;
-    setIsMuted(nextMuted);
-    if (iframeRef.current?.contentWindow) {
-      if (nextMuted) {
-        iframeRef.current.contentWindow.postMessage(
-          JSON.stringify({ event: 'command', func: 'mute', args: [] }),
-          '*'
-        );
-      } else {
-        iframeRef.current.contentWindow.postMessage(
-          JSON.stringify({ event: 'command', func: 'unMute', args: [] }),
-          '*'
-        );
-        iframeRef.current.contentWindow.postMessage(
-          JSON.stringify({ event: 'command', func: 'playVideo', args: [] }),
-          '*'
-        );
-        iframeRef.current.contentWindow.postMessage(
-          JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }),
-          '*'
-        );
-      }
-    }
+    setIsMuted((prev) => !prev);
   };
 
   const isFollowing = store.isFollowing(post.profile_id);
@@ -156,7 +154,7 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
               onClick={() => onOpenProfile(post.profile_id)}
               className="font-bold hover:underline cursor-pointer text-neutral-900 dark:text-white"
             >
-              @{post.profile.username}
+              @{author.username}
             </span>
             <span className="text-neutral-400">republicou</span>
           </div>
@@ -191,7 +189,7 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
             <div className="flex items-center gap-1.5 font-bold text-sm text-neutral-900 dark:text-white group-hover:text-rose-500 transition-colors">
               <span>{author.username}</span>
               {author.verified && <span className="text-blue-500 text-xs font-bold">✓</span>}
-              {post.profile.banned && (
+              {author.banned && (
                 <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.2 rounded uppercase">
                   Banido
                 </span>
@@ -310,7 +308,6 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
             src={post.media_url}
             cacheKey={`post_${post.id}`}
             alt="Post Media"
-            preferBlobUrl={true}
             className="w-full h-full object-cover"
           />
         )}
@@ -321,14 +318,14 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
           </div>
         )}
 
-        {/* Audio Player for Attached Music Track (Hidden iframe - No video visible!) */}
-        {post.youtube_track && post.youtube_track.youtube_id && (
+        {/* Audio Player for Attached Music Track (Only mounts when unmuted, in view and valid ID) */}
+        {post.youtube_track && isValidYouTubeId(post.youtube_track.youtube_id) && (
           <div key="post-audio-container">
-            {isInView && (
+            {!isMuted && isInView && (
               <iframe
                 ref={iframeRef}
-                key={`post-audio-${post.id}-${isMuted ? 'muted' : 'unmuted'}`}
-                src={`https://www.youtube-nocookie.com/embed/${post.youtube_track.youtube_id}?enablejsapi=1&autoplay=1&mute=${isMuted ? 1 : 0}&start=${post.youtube_track.start_time_seconds || 0}&end=${(post.youtube_track.start_time_seconds || 0) + (post.youtube_track.duration_seconds || 30)}&loop=1&playlist=${post.youtube_track.youtube_id}&controls=0&playsinline=1`}
+                key={`post-audio-${post.id}`}
+                src={`https://www.youtube-nocookie.com/embed/${post.youtube_track.youtube_id}?enablejsapi=1&autoplay=1&mute=0&start=${post.youtube_track.start_time_seconds || 0}&end=${(post.youtube_track.start_time_seconds || 0) + (post.youtube_track.duration_seconds || 30)}&loop=1&playlist=${post.youtube_track.youtube_id}&controls=0&playsinline=1`}
                 title={post.youtube_track.title || 'Áudio'}
                 className="absolute -top-[9999px] -left-[9999px] w-1 h-1 opacity-0 pointer-events-none"
                 tabIndex={-1}
@@ -468,7 +465,7 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
             onClick={() => onOpenProfile(post.profile_id)}
             className="font-bold mr-1.5 text-neutral-900 dark:text-white cursor-pointer hover:underline"
           >
-            {post.profile.username}
+            {author.username}
           </span>
           <MentionText text={post.caption} onOpenProfile={onOpenProfile} />
         </div>
@@ -524,7 +521,7 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
       <ReportProfileModal
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
-        reportedProfile={post.profile}
+        reportedProfile={post.profile || (author as Profile)}
       />
     </article>
   );

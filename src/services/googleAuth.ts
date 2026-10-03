@@ -45,17 +45,17 @@ export function generateDeterministicUUID(input: string): string {
   return `${p1}-${p2}-${p3}-${p4}-${p5}`;
 }
 
+import { safeStorage } from './safeStorage';
+
 export function getOrCreateUserIdForEmail(email: string): string {
   const cleanEmail = email.trim().toLowerCase();
   const key = `rpg_user_uid_${cleanEmail}`;
-  const stored = localStorage.getItem(key);
+  const stored = safeStorage.getItem(key);
   if (stored && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(stored)) {
     return stored;
   }
   const uid = generateDeterministicUUID(cleanEmail);
-  try {
-    localStorage.setItem(key, uid);
-  } catch {}
+  safeStorage.setItem(key, uid);
   return uid;
 }
 
@@ -66,7 +66,7 @@ const listeners: Set<Listener> = new Set();
 
 export function getStoredGoogleUser(): GoogleUser | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = safeStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     return JSON.parse(raw);
   } catch {
@@ -76,7 +76,7 @@ export function getStoredGoogleUser(): GoogleUser | null {
 
 export function setStoredGoogleUser(user: GoogleUser): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+    safeStorage.setItem(STORAGE_KEY, JSON.stringify(user));
     notifyListeners(user);
   } catch (e) {
     console.error('Failed to store Google user:', e);
@@ -85,7 +85,7 @@ export function setStoredGoogleUser(user: GoogleUser): void {
 
 export function clearStoredGoogleUser(): void {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    safeStorage.removeItem(STORAGE_KEY);
     notifyListeners(null);
   } catch (e) {
     console.error('Failed to clear Google user:', e);

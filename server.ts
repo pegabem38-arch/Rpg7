@@ -113,7 +113,7 @@ async function startServer() {
 
   const distPath = path.resolve(__dirname, 'dist');
   const hasDist = fs.existsSync(distPath) && fs.existsSync(path.join(distPath, 'index.html'));
-  const isProduction = process.env.NODE_ENV === 'production' || hasDist;
+  const isProduction = process.env.NODE_ENV === 'production';
 
   if (isProduction && hasDist) {
     console.log(`[Production] Serving static files from ${distPath}`);

@@ -97,48 +97,57 @@ export const CommentsDrawer: React.FC<Props> = ({
               Seja o primeiro a comentar nesta publicação! ✨
             </div>
           ) : (
-            comments.map((c) => (
-              <div key={c.id} className="flex items-start gap-3">
-                <img
-                  src={c.profile.avatar_url}
-                  alt={c.profile.username}
-                  onClick={() => {
-                    if (onOpenProfile) {
-                      onClose();
-                      onOpenProfile(c.profile_id);
-                    }
-                  }}
-                  className="w-8 h-8 rounded-full object-cover flex-shrink-0 cursor-pointer hover:scale-105 transition-transform"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="bg-neutral-100 dark:bg-neutral-800/80 p-2.5 rounded-2xl">
-                    <span
-                      onClick={() => {
-                        if (onOpenProfile) {
-                          onClose();
-                          onOpenProfile(c.profile_id);
-                        }
-                      }}
-                      className="font-bold text-xs text-neutral-900 dark:text-white block cursor-pointer hover:text-rose-500 transition-colors"
-                    >
-                      @{c.profile.username}
-                    </span>
-                    <p className="text-xs text-neutral-800 dark:text-neutral-200 mt-0.5 whitespace-pre-wrap leading-relaxed">
-                      <MentionText text={c.text} onOpenProfile={onOpenProfile} />
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3 mt-1 ml-2 text-[10px] text-neutral-400">
-                    <span>{new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                    <button
-                      onClick={() => handleReplyTo(c.profile.username)}
-                      className="hover:text-rose-500 dark:hover:text-rose-400 font-semibold cursor-pointer"
-                    >
-                      Responder
-                    </button>
+            comments.map((c) => {
+              if (!c) return null;
+              const commentAuthor = c.profile || (c.profile_id ? store.getProfileById(c.profile_id) : undefined) || {
+                id: c.profile_id || 'unknown',
+                username: 'usuario',
+                avatar_url: ''
+              };
+
+              return (
+                <div key={c.id} className="flex items-start gap-3">
+                  <img
+                    src={commentAuthor.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80'}
+                    alt={commentAuthor.username}
+                    onClick={() => {
+                      if (onOpenProfile && c.profile_id) {
+                        onClose();
+                        onOpenProfile(c.profile_id);
+                      }
+                    }}
+                    className="w-8 h-8 rounded-full object-cover flex-shrink-0 cursor-pointer hover:scale-105 transition-transform"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="bg-neutral-100 dark:bg-neutral-800/80 p-2.5 rounded-2xl">
+                      <span
+                        onClick={() => {
+                          if (onOpenProfile && c.profile_id) {
+                            onClose();
+                            onOpenProfile(c.profile_id);
+                          }
+                        }}
+                        className="font-bold text-xs text-neutral-900 dark:text-white block cursor-pointer hover:text-rose-500 transition-colors"
+                      >
+                        @{commentAuthor.username || 'usuario'}
+                      </span>
+                      <p className="text-xs text-neutral-800 dark:text-neutral-200 mt-0.5 whitespace-pre-wrap leading-relaxed">
+                        <MentionText text={c.text} onOpenProfile={onOpenProfile} />
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3 mt-1 ml-2 text-[10px] text-neutral-400">
+                      <span>{new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <button
+                        onClick={() => handleReplyTo(commentAuthor.username || 'usuario')}
+                        className="hover:text-rose-500 dark:hover:text-rose-400 font-semibold cursor-pointer"
+                      >
+                        Responder
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 

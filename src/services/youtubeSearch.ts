@@ -166,10 +166,11 @@ export function convertToYoutubeTrack(
   let ytId = item.id;
   let ytUrl = item.youtube_url || `https://www.youtube.com/watch?v=${ytId}`;
 
-  // If ID starts with itunes-, extract or keep
-  if (ytId.startsWith('itunes-')) {
-    // Generate a fallback embed search or placeholder
-    ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${item.artist} ${item.title}`)}`;
+  // If ID starts with itunes-, extract or assign a valid YouTube video ID
+  if (!ytId || ytId.startsWith('itunes-') || !/^[a-zA-Z0-9_-]{11}$/.test(ytId)) {
+    // Pick first curated track id as safe YouTube playable fallback
+    ytId = CURATED_TRACKS[0]?.id || '9Vt4XguN2-A';
+    ytUrl = `https://www.youtube.com/watch?v=${ytId}`;
   }
 
   return {

@@ -7,9 +7,11 @@ export const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_2ztmJGIVzEkPnPpF54-miQ_
 const SUPABASE_STORAGE_KEY_URL = 'rpg_supabase_url';
 const SUPABASE_STORAGE_KEY_ANON = 'rpg_supabase_anon_key';
 
+import { safeStorage } from '../services/safeStorage';
+
 export function getStoredSupabaseCredentials() {
-  const storedUrl = localStorage.getItem(SUPABASE_STORAGE_KEY_URL) || localStorage.getItem('instaconnect_supabase_url');
-  const storedAnon = localStorage.getItem(SUPABASE_STORAGE_KEY_ANON) || localStorage.getItem('instaconnect_supabase_anon_key');
+  const storedUrl = safeStorage.getItem(SUPABASE_STORAGE_KEY_URL) || safeStorage.getItem('instaconnect_supabase_url');
+  const storedAnon = safeStorage.getItem(SUPABASE_STORAGE_KEY_ANON) || safeStorage.getItem('instaconnect_supabase_anon_key');
 
   const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL;
   const envAnon = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
@@ -27,17 +29,17 @@ export function getStoredSupabaseCredentials() {
 
 export function saveSupabaseCredentials(url: string, anonKey: string) {
   if (url) {
-    localStorage.setItem(SUPABASE_STORAGE_KEY_URL, url);
+    safeStorage.setItem(SUPABASE_STORAGE_KEY_URL, url);
   } else {
-    localStorage.removeItem(SUPABASE_STORAGE_KEY_URL);
-    localStorage.removeItem('instaconnect_supabase_url');
+    safeStorage.removeItem(SUPABASE_STORAGE_KEY_URL);
+    safeStorage.removeItem('instaconnect_supabase_url');
   }
 
   if (anonKey) {
-    localStorage.setItem(SUPABASE_STORAGE_KEY_ANON, anonKey);
+    safeStorage.setItem(SUPABASE_STORAGE_KEY_ANON, anonKey);
   } else {
-    localStorage.removeItem(SUPABASE_STORAGE_KEY_ANON);
-    localStorage.removeItem('instaconnect_supabase_anon_key');
+    safeStorage.removeItem(SUPABASE_STORAGE_KEY_ANON);
+    safeStorage.removeItem('instaconnect_supabase_anon_key');
   }
 }
 

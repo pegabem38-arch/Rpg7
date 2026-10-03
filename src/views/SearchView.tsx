@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, UserPlus, UserCheck, Sparkles, MapPin, Grid, Film } from 'lucide-react';
 import { store } from '../services/store';
 import { Profile } from '../types';
+import { CachedImage } from '../components/CachedImage';
 
 interface Props {
   onOpenProfile: (profileId: string) => void;
@@ -15,18 +16,18 @@ export const SearchView: React.FC<Props> = ({ onOpenProfile }) => {
 
   const [query, setQuery] = useState('');
   const activeProfile = store.getActiveProfile();
-  const allProfiles = store.getDiscoverableProfiles();
-  const posts = store.getPosts();
+  const allProfiles = store.getDiscoverableProfiles() || [];
+  const posts = store.getPosts() || [];
 
   // Filter profiles based on search query
   const filteredProfiles = allProfiles.filter((p) => {
+    if (!p) return false;
     if (!query.trim()) return true;
     const q = query.toLowerCase();
-    return (
-      p.username.toLowerCase().includes(q) ||
-      p.full_name.toLowerCase().includes(q) ||
-      p.bio.toLowerCase().includes(q)
-    );
+    const uname = (p.username || '').toLowerCase();
+    const fname = (p.full_name || '').toLowerCase();
+    const bioText = (p.bio || '').toLowerCase();
+    return uname.includes(q) || fname.includes(q) || bioText.includes(q);
   });
 
   return (
@@ -71,9 +72,10 @@ export const SearchView: React.FC<Props> = ({ onOpenProfile }) => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {filteredProfiles.map((p) => {
-              const isSelf = p.id === activeProfile?.id;
-              const isFollowing = store.isFollowing(p.id);
-              const pPosts = posts.filter((post) => post.profile_id === p.id);
+              if (!p || !p.id) return null;
+              const isSelf = Boolean(activeProfile && p.id === activeProfile.id);
+              const isFollowing = p.id ? store.isFollowing(p.id) : false;
+              const pPosts = posts.filter((post) => post && post.profile_id === p.id);
 
               return (
                 <div
@@ -85,22 +87,23 @@ export const SearchView: React.FC<Props> = ({ onOpenProfile }) => {
                     onClick={() => onOpenProfile(p.id)}
                     className="flex items-center gap-3 min-w-0 cursor-pointer flex-1"
                   >
-                    <img
+                    <CachedImage
                       src={p.avatar_url}
-                      alt={p.username}
+                      cacheKey={`avatar_${p.id}`}
+                      alt={p.username || 'Perfil'}
                       className="w-12 h-12 rounded-full object-cover border-2 border-rose-500/70 group-hover:scale-105 transition-transform flex-shrink-0"
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 font-bold text-sm text-neutral-900 dark:text-white group-hover:text-rose-500 transition-colors truncate">
-                        <span>@{p.username}</span>
+                        <span>@{p.username || 'perfil'}</span>
                         {p.verified && <span className="text-blue-500 text-xs">✓</span>}
                       </div>
                       <span className="text-xs text-neutral-500 dark:text-neutral-400 block truncate">
-                        {p.full_name}
+                        {p.full_name || ''}
                       </span>
                       <div className="flex items-center gap-3 text-[10px] text-neutral-400 mt-1">
                         <span>
-                          <strong className="text-neutral-700 dark:text-neutral-300">{p.followers_count}</strong> seguidores
+                          <strong className="text-neutral-700 dark:text-neutral-300">{p.followers_count || 0}</strong> seguidores
                         </span>
                         <span>
                           <strong className="text-neutral-700 dark:text-neutral-300">{pPosts.length}</strong> posts

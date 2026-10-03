@@ -29,6 +29,19 @@ export const StoryViewerModal: React.FC<Props> = ({
   const [isStoryMuted, setIsStoryMuted] = useState(false);
 
   const currentStory = stories[currentIndex] || stories[0];
+  const activeProfile = store.getActiveProfile();
+  const storyAuthor = currentStory?.profile || (currentStory?.profile_id ? store.getProfileById(currentStory.profile_id) : undefined) || {
+    id: currentStory?.profile_id || 'unknown',
+    username: 'aventureiro',
+    avatar_url: '',
+    full_name: 'Aventureiro',
+    profile_type: 'pessoal' as const,
+    verified: false,
+    followers_count: 0,
+    following_count: 0,
+    posts_count: 0,
+    created_at: new Date().toISOString()
+  };
   const hasMusic = Boolean(currentStory?.youtube_track);
   const [isAudioReady, setIsAudioReady] = useState(!hasMusic);
 
@@ -227,13 +240,13 @@ export const StoryViewerModal: React.FC<Props> = ({
               className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 transition-opacity group z-30"
             >
               <img
-                src={currentStory.profile.avatar_url}
-                alt={currentStory.profile.username}
+                src={storyAuthor.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80'}
+                alt={storyAuthor.username}
                 className="w-9 h-9 rounded-full object-cover border-2 border-rose-500 group-hover:scale-105 transition-transform"
               />
               <div className="text-white">
                 <span className="font-bold text-sm block leading-none hover:underline">
-                  @{currentStory.profile.username}
+                  @{storyAuthor.username}
                 </span>
                 <span className="text-[10px] text-white/80 flex items-center gap-1.5 mt-0.5">
                   <span>{new Date(currentStory.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -274,7 +287,7 @@ export const StoryViewerModal: React.FC<Props> = ({
                 </button>
               )}
 
-              {currentStory.profile_id !== store.getActiveProfile().id && (
+              {Boolean(activeProfile && currentStory.profile_id !== activeProfile.id) && (
                 <button
                   type="button"
                   onClick={handleRepostStory}
@@ -285,7 +298,7 @@ export const StoryViewerModal: React.FC<Props> = ({
                 </button>
               )}
 
-              {currentStory.profile_id === store.getActiveProfile().id && (
+              {Boolean(activeProfile && currentStory.profile_id === activeProfile.id) && (
                 <button
                   type="button"
                   onClick={(e) => {
@@ -312,66 +325,71 @@ export const StoryViewerModal: React.FC<Props> = ({
           </div>
 
           {/* Repost attribution chip if story is a repost of a post */}
-          {currentStory.repost_of_post && (
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onOpenProfile) {
-                  onClose();
-                  onOpenProfile(currentStory.repost_of_post!.profile_id);
-                }
-              }}
-              className="mt-2 bg-black/60 backdrop-blur-md rounded-2xl p-2.5 border border-white/20 flex items-center gap-2.5 cursor-pointer hover:bg-black/80 transition-colors z-30"
-            >
-              <img
-                src={currentStory.repost_of_post.profile.avatar_url}
-                alt=""
-                className="w-7 h-7 rounded-full object-cover border border-rose-500 shrink-0"
-              />
-              <div className="min-w-0 flex-1 text-white">
-                <div className="flex items-center gap-1">
-                  <Repeat2 className="w-3 h-3 text-emerald-400 shrink-0" />
-                  <span className="font-bold text-xs truncate">
-                    Post de @{currentStory.repost_of_post.profile.username}
-                  </span>
+          {currentStory.repost_of_post && (() => {
+            const postAuthor = currentStory.repost_of_post.profile || (currentStory.repost_of_post.profile_id ? store.getProfileById(currentStory.repost_of_post.profile_id) : undefined) || { username: 'amigo', avatar_url: '' };
+            return (
+              <div
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onOpenProfile && currentStory.repost_of_post?.profile_id) {
+                    onClose();
+                    onOpenProfile(currentStory.repost_of_post.profile_id);
+                  }
+                }}
+                className="mt-2 bg-black/60 backdrop-blur-md rounded-2xl p-2.5 border border-white/20 flex items-center gap-2.5 cursor-pointer hover:bg-black/80 transition-colors z-30"
+              >
+                <img
+                  src={postAuthor.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80'}
+                  alt=""
+                  className="w-7 h-7 rounded-full object-cover border border-rose-500 shrink-0"
+                />
+                <div className="min-w-0 flex-1 text-white">
+                  <div className="flex items-center gap-1">
+                    <Repeat2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                    <span className="font-bold text-xs truncate">
+                      Post de @{postAuthor.username || 'amigo'}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-white/80 truncate">
+                    {currentStory.repost_of_post.caption || 'Toque para ver a publicação'}
+                  </p>
                 </div>
-                <p className="text-[10px] text-white/80 truncate">
-                  {currentStory.repost_of_post.caption || 'Toque para ver a publicação'}
-                </p>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
-          {/* Repost attribution chip if story is a repost of another story */}
-          {currentStory.repost_of_story && (
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onOpenProfile) {
-                  onClose();
-                  onOpenProfile(currentStory.repost_of_story!.profile_id);
-                }
-              }}
-              className="mt-2 bg-black/60 backdrop-blur-md rounded-2xl p-2.5 border border-white/20 flex items-center gap-2.5 cursor-pointer hover:bg-black/80 transition-colors z-30"
-            >
-              <img
-                src={currentStory.repost_of_story.profile.avatar_url}
-                alt=""
-                className="w-7 h-7 rounded-full object-cover border border-rose-500 shrink-0"
-              />
-              <div className="min-w-0 flex-1 text-white">
-                <div className="flex items-center gap-1">
-                  <Repeat2 className="w-3 h-3 text-emerald-400 shrink-0" />
-                  <span className="font-bold text-xs truncate">
-                    Story de @{currentStory.repost_of_story.profile.username}
-                  </span>
+          {currentStory.repost_of_story && (() => {
+            const repostAuthor = currentStory.repost_of_story.profile || (currentStory.repost_of_story.profile_id ? store.getProfileById(currentStory.repost_of_story.profile_id) : undefined) || { username: 'amigo', avatar_url: '' };
+            return (
+              <div
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onOpenProfile && currentStory.repost_of_story?.profile_id) {
+                    onClose();
+                    onOpenProfile(currentStory.repost_of_story.profile_id);
+                  }
+                }}
+                className="mt-2 bg-black/60 backdrop-blur-md rounded-2xl p-2.5 border border-white/20 flex items-center gap-2.5 cursor-pointer hover:bg-black/80 transition-colors z-30"
+              >
+                <img
+                  src={repostAuthor.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80'}
+                  alt=""
+                  className="w-7 h-7 rounded-full object-cover border border-rose-500 shrink-0"
+                />
+                <div className="min-w-0 flex-1 text-white">
+                  <div className="flex items-center gap-1">
+                    <Repeat2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                    <span className="font-bold text-xs truncate">
+                      Story de @{repostAuthor.username || 'amigo'}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-white/80 truncate">
+                    Toque para ver o perfil
+                  </p>
                 </div>
-                <p className="text-[10px] text-white/80 truncate">
-                  Toque para ver o perfil
-                </p>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Music Track Badge on Story */}
           {currentStory.youtube_track && (

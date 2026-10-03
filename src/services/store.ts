@@ -10,6 +10,7 @@ import { getSupabaseClient } from '../lib/supabase';
 import { getStoredGoogleUser, ADMIN_EMAIL, isAppAdmin, GoogleUser, getOrCreateUserIdForEmail } from './googleAuth';
 import { compressImage, convertToPermanentDataUrl } from '../utils/imageCompressor';
 import { imageCache } from './imageCache';
+import { safeStorage } from './safeStorage';
 
 const LOCAL_STORAGE_KEY = 'rpg_state_v2';
 
@@ -49,7 +50,13 @@ interface StoreState {
 
 // Initial seed
 function getInitialState(): StoreState {
-  const saved = localStorage.getItem(LOCAL_STORAGE_KEY) || localStorage.getItem('instaconnect_state_v2');
+  let saved: string | null = null;
+  try {
+    saved = safeStorage.getItem(LOCAL_STORAGE_KEY) || safeStorage.getItem('instaconnect_state_v2');
+  } catch (e) {
+    console.warn('Erro ao ler armazenamento local:', e);
+  }
+
   let state: StoreState = {
     profiles: [],
     activeProfileId: '',
@@ -79,7 +86,7 @@ function getInitialState(): StoreState {
 
   // Load dedicated backup keys so posts/profiles never disappear on reload
   try {
-    const savedPosts = localStorage.getItem('rpg_posts_v2');
+    const savedPosts = safeStorage.getItem('rpg_posts_v2');
     if (savedPosts) {
       const parsedPosts = JSON.parse(savedPosts);
       if (Array.isArray(parsedPosts) && parsedPosts.length > 0) {
@@ -115,7 +122,7 @@ function getInitialState(): StoreState {
     // Carrega backup dedicado exclusivamente para a conta autenticada
     if (currentGoogleUser) {
       const userKey = currentUid || currentEmail;
-      const userSaved = localStorage.getItem('rpg_profiles_' + userKey);
+      const userSaved = safeStorage.getItem('rpg_profiles_' + userKey);
       if (userSaved) {
         const parsedProfiles = JSON.parse(userSaved);
         if (Array.isArray(parsedProfiles) && parsedProfiles.length > 0) {
@@ -132,7 +139,7 @@ function getInitialState(): StoreState {
   } catch (e) {}
 
   try {
-    const savedFollowers = localStorage.getItem('rpg_followers_v2');
+    const savedFollowers = safeStorage.getItem('rpg_followers_v2');
     if (savedFollowers) {
       const parsedFollowers = JSON.parse(savedFollowers);
       if (Array.isArray(parsedFollowers) && parsedFollowers.length > 0) {
@@ -142,7 +149,7 @@ function getInitialState(): StoreState {
   } catch (e) {}
 
   try {
-    const savedReports = localStorage.getItem('rpg_reports_v2');
+    const savedReports = safeStorage.getItem('rpg_reports_v2');
     if (savedReports) {
       const parsedReports = JSON.parse(savedReports);
       if (Array.isArray(parsedReports)) {
@@ -209,25 +216,24 @@ class Store {
       if (currentGoogleUser && myProfs.length > 0) {
         const userKey = currentGoogleUser.google_id || currentGoogleUser.email.toLowerCase();
         try {
-          localStorage.setItem('rpg_profiles_' + userKey, JSON.stringify(myProfs));
+          safeStorage.setItem('rpg_profiles_' + userKey, JSON.stringify(myProfs));
         } catch {}
       }
 
       try {
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(this.state));
-        localStorage.setItem('rpg_posts_v2', JSON.stringify((this.state.posts || []).slice(0, 50)));
-        localStorage.setItem('rpg_profiles_v2', JSON.stringify(myProfs));
-        localStorage.setItem('rpg_followers_v2', JSON.stringify(this.state.followers || []));
-        localStorage.setItem('rpg_reports_v2', JSON.stringify(this.state.reports || []));
+        safeStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(this.state));
+        safeStorage.setItem('rpg_posts_v2', JSON.stringify((this.state.posts || []).slice(0, 50)));
+        safeStorage.setItem('rpg_profiles_v2', JSON.stringify(myProfs));
+        safeStorage.setItem('rpg_followers_v2', JSON.stringify(this.state.followers || []));
+        safeStorage.setItem('rpg_reports_v2', JSON.stringify(this.state.reports || []));
       } catch (e) {
-        console.warn('Armazenamento local excedeu quota. Limpando chaves antigas e salvando dados compactados...', e);
         try {
-          localStorage.removeItem('instaconnect_state_v2');
-          localStorage.removeItem('rpg_state');
-          localStorage.removeItem('supabase.auth.token');
+          safeStorage.removeItem('instaconnect_state_v2');
+          safeStorage.removeItem('rpg_state');
+          safeStorage.removeItem('supabase.auth.token');
 
           const compacted = this.getCompactedState();
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(compacted));
+          safeStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(compacted));
         } catch (err2) {
           console.warn('Aviso: Armazenamento local do navegador sem espaço disponível.', err2);
         }
@@ -533,7 +539,18 @@ class Store {
             media_type: rp.media_type || 'image',
             caption: rp.caption || '',
             location: rp.location || '',
-            youtube_track: rp.youtube_track,
+            youtube_track: (() => {
+              if (!rp.youtube_track) return undefined;
+              let track = rp.youtube_track;
+              if (!track.youtube_id || !/^[a-zA-Z0-9_-]{11}$/.test(track.youtube_id)) {
+                return {
+                  ...track,
+                  youtube_id: '2yreX_ZCfgM',
+                  youtube_url: 'https://www.youtube.com/watch?v=2yreX_ZCfgM'
+                };
+              }
+              return track;
+            })(),
             likes_count: rp.likes_count || 0,
             comments_count: rp.comments_count || 0,
             is_liked: false,
@@ -800,7 +817,7 @@ class Store {
       const userKey = currentGoogleUser.google_id || currentGoogleUser.email?.toLowerCase();
       if (userKey && myProfs.length > 0) {
         try {
-          localStorage.setItem('rpg_profiles_' + userKey, JSON.stringify(myProfs));
+          safeStorage.setItem('rpg_profiles_' + userKey, JSON.stringify(myProfs));
         } catch {}
       }
 
@@ -816,9 +833,9 @@ class Store {
 
     // Salva o estado sem sobrescrever a chave de perfis do usuário
     try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(this.state));
-      localStorage.setItem('rpg_posts_v2', JSON.stringify((this.state.posts || []).slice(0, 50)));
-      localStorage.setItem('rpg_profiles_v2', JSON.stringify([]));
+      safeStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(this.state));
+      safeStorage.setItem('rpg_posts_v2', JSON.stringify((this.state.posts || []).slice(0, 50)));
+      safeStorage.setItem('rpg_profiles_v2', JSON.stringify([]));
     } catch {}
 
     this.notify();
@@ -830,7 +847,7 @@ class Store {
 
     // 1. Carrega backup local salvo para este usuário específico
     const userStorageKey = 'rpg_profiles_' + (uid || cleanEmail);
-    const userSaved = localStorage.getItem(userStorageKey);
+    const userSaved = safeStorage.getItem(userStorageKey);
     if (userSaved) {
       try {
         const parsed = JSON.parse(userSaved);
@@ -902,20 +919,20 @@ class Store {
     const target = profileIdOrUsername.toLowerCase().trim();
 
     // 1. Busca nos perfis do usuário
-    const myProfile = this.state.profiles.find(
-      (p) => p.id === target || p.username.toLowerCase() === target
+    const myProfile = (this.state.profiles || []).find(
+      (p) => p && (p.id === target || (p.username && p.username.toLowerCase() === target))
     );
     if (myProfile) return myProfile;
 
     // 2. Busca no cache de perfis públicos
     const publicProfile = Array.from(this.publicProfilesCache.values()).find(
-      (p) => p.id === target || p.username.toLowerCase() === target
+      (p) => p && (p.id === target || (p.username && p.username.toLowerCase() === target))
     );
     if (publicProfile) return publicProfile;
 
     // 3. Busca em posts/stories carregados
-    const postWithAuthor = this.state.posts.find(
-      (p) => p.profile_id === target || p.profile?.username?.toLowerCase() === target
+    const postWithAuthor = (this.state.posts || []).find(
+      (p) => p && (p.profile_id === target || (p.profile?.username && p.profile.username.toLowerCase() === target))
     );
     if (postWithAuthor?.profile) return postWithAuthor.profile;
 
@@ -932,15 +949,15 @@ class Store {
 
     // Perfis do cache público
     for (const p of this.publicProfilesCache.values()) {
-      if (!seen.has(p.id) && p.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+      if (p && p.id && !seen.has(p.id) && p.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
         seen.add(p.id);
         list.push(p);
       }
     }
 
     // Autores de posts já carregados
-    for (const post of this.state.posts) {
-      if (post.profile && !seen.has(post.profile.id) && post.profile.id !== myId) {
+    for (const post of (this.state.posts || [])) {
+      if (post && post.profile && post.profile.id && !seen.has(post.profile.id) && post.profile.id !== myId) {
         if (post.profile.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
           seen.add(post.profile.id);
           list.push(post.profile);
@@ -1094,14 +1111,17 @@ class Store {
       return { success: false, message: 'Você precisa estar logado para enviar uma denúncia.' };
     }
 
-    const reportedProfile = this.state.profiles.find(
-      (p) => p.id === data.reported_profile_id || p.username === data.reported_profile_id
+    const reportedProfile = (this.state.profiles || []).find(
+      (p) => p && (p.id === data.reported_profile_id || p.username === data.reported_profile_id)
     );
     if (!reportedProfile) {
       return { success: false, message: 'Perfil denunciado não encontrado.' };
     }
 
-    if (activeProfile.id === reportedProfile.id || activeProfile.username.toLowerCase() === reportedProfile.username.toLowerCase()) {
+    if (
+      activeProfile.id === reportedProfile.id ||
+      (activeProfile.username && reportedProfile.username && activeProfile.username.toLowerCase() === reportedProfile.username.toLowerCase())
+    ) {
       return { success: false, message: 'Você não pode denunciar o seu próprio perfil.' };
     }
 
@@ -1234,8 +1254,8 @@ class Store {
     const cleanUsername = username.replace(/^@/, '').toLowerCase().trim();
     const currentGoogleUser = getStoredGoogleUser();
     const isAdmin = isAppAdmin(currentGoogleUser?.email);
-    const profile = this.state.profiles.find(
-      (p) => p.username.toLowerCase() === cleanUsername
+    const profile = (this.state.profiles || []).find(
+      (p) => p && p.username && p.username.toLowerCase() === cleanUsername
     );
     if (!profile) return undefined;
     if (!isAdmin && profile.google_email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
@@ -1247,14 +1267,15 @@ class Store {
   public searchProfilesForMention(query: string): Profile[] {
     const currentGoogleUser = getStoredGoogleUser();
     const isAdmin = isAppAdmin(currentGoogleUser?.email);
+    const allProfs = this.state.profiles || [];
     const visibleProfiles = isAdmin
-      ? this.state.profiles
-      : this.state.profiles.filter((p) => p.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase());
+      ? allProfs
+      : allProfs.filter((p) => p && p.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase());
 
     const q = query.replace(/^@/, '').toLowerCase().trim();
-    if (!q) return visibleProfiles.slice(0, 6);
+    if (!q) return visibleProfiles.filter(p => p && p.username).slice(0, 6);
     return visibleProfiles
-      .filter((p) => p.username.toLowerCase().includes(q) || p.full_name.toLowerCase().includes(q))
+      .filter((p) => p && ((p.username && p.username.toLowerCase().includes(q)) || (p.full_name && p.full_name.toLowerCase().includes(q))))
       .slice(0, 6);
   }
 
@@ -1339,7 +1360,7 @@ class Store {
       const userKey = currentGoogleUser.google_id || currentGoogleUser.email?.toLowerCase();
       if (userKey) {
         try {
-          localStorage.setItem('rpg_profiles_' + userKey, JSON.stringify(remainingMyProfiles));
+          safeStorage.setItem('rpg_profiles_' + userKey, JSON.stringify(remainingMyProfiles));
         } catch {}
       }
     }
@@ -1361,13 +1382,14 @@ class Store {
   public isFollowing(targetProfileId: string, followerId?: string): boolean {
     const activeId = followerId || this.state.activeProfileId;
     if (!activeId || !targetProfileId) return false;
-    const activeProf = this.state.profiles.find((p) => p.id === activeId || p.username === activeId) || this.getActiveProfile();
-    const targetProf = this.state.profiles.find((p) => p.id === targetProfileId || p.username === targetProfileId);
+    const activeProf = (this.state.profiles || []).find((p) => p && (p.id === activeId || p.username === activeId)) || this.getActiveProfile();
+    const targetProf = (this.state.profiles || []).find((p) => p && (p.id === targetProfileId || p.username === targetProfileId));
     if (!activeProf || !targetProf) return false;
-    if (activeProf.id === targetProf.id || activeProf.username.toLowerCase() === targetProf.username.toLowerCase()) return false;
+    if (activeProf.id === targetProf.id) return false;
+    if (activeProf.username && targetProf.username && activeProf.username.toLowerCase() === targetProf.username.toLowerCase()) return false;
 
-    return this.state.followers.some(
-      (f) => f.follower_id === activeProf.id && f.following_id === targetProf.id
+    return (this.state.followers || []).some(
+      (f) => f && f.follower_id === activeProf.id && f.following_id === targetProf.id
     );
   }
 
@@ -1478,13 +1500,13 @@ class Store {
     const activeId = activeProfile?.id;
     if (!activeId || !targetProfileId) return;
 
-    const targetProfile = this.state.profiles.find((p) => p.id === targetProfileId || p.username === targetProfileId);
+    const targetProfile = (this.state.profiles || []).find((p) => p && (p.id === targetProfileId || p.username === targetProfileId));
     if (!targetProfile) return;
 
     const targetId = targetProfile.id;
 
     // Regra 1: O mesmo perfil NÃO pode seguir a si mesmo
-    if (activeId === targetId || (activeProfile && targetProfile && activeProfile.username.toLowerCase() === targetProfile.username.toLowerCase())) {
+    if (activeId === targetId || (activeProfile && targetProfile && activeProfile.username && targetProfile.username && activeProfile.username.toLowerCase() === targetProfile.username.toLowerCase())) {
       console.warn('Bloqueado: O mesmo perfil não pode seguir a si mesmo.');
       return;
     }
@@ -1555,17 +1577,18 @@ class Store {
     if (!targetProf) return [];
 
     const targetId = targetProf.id;
-    const targetUsername = targetProf.username.toLowerCase();
+    const targetUsername = (targetProf.username || '').toLowerCase();
 
     const followerIds = new Set(
-      this.state.followers
-        .filter((f) => f.following_id === targetId && f.follower_id !== targetId)
+      (this.state.followers || [])
+        .filter((f) => f && f.following_id === targetId && f.follower_id !== targetId)
         .map((f) => f.follower_id)
     );
 
-    return this.state.profiles.filter((p) => {
+    return (this.state.profiles || []).filter((p) => {
+      if (!p || !p.id) return false;
       // O próprio perfil NUNCA pode estar em sua lista de seguidores
-      if (p.id === targetId || p.username.toLowerCase() === targetUsername) return false;
+      if (p.id === targetId || (p.username && p.username.toLowerCase() === targetUsername)) return false;
       if (!isAdmin && p.google_email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) return false;
       return followerIds.has(p.id);
     });
@@ -1574,21 +1597,22 @@ class Store {
   public getFollowing(profileId: string): Profile[] {
     const currentGoogleUser = getStoredGoogleUser();
     const isAdmin = isAppAdmin(currentGoogleUser?.email);
-    const targetProf = this.state.profiles.find((p) => p.id === profileId || p.username === profileId);
+    const targetProf = (this.state.profiles || []).find((p) => p && (p.id === profileId || p.username === profileId));
     if (!targetProf) return [];
 
     const targetId = targetProf.id;
-    const targetUsername = targetProf.username.toLowerCase();
+    const targetUsername = (targetProf.username || '').toLowerCase();
 
     const followingIds = new Set(
-      this.state.followers
-        .filter((f) => f.follower_id === targetId && f.following_id !== targetId)
+      (this.state.followers || [])
+        .filter((f) => f && f.follower_id === targetId && f.following_id !== targetId)
         .map((f) => f.following_id)
     );
 
-    return this.state.profiles.filter((p) => {
+    return (this.state.profiles || []).filter((p) => {
+      if (!p || !p.id) return false;
       // O próprio perfil NUNCA pode estar em sua lista de seguindo
-      if (p.id === targetId || p.username.toLowerCase() === targetUsername) return false;
+      if (p.id === targetId || (p.username && p.username.toLowerCase() === targetUsername)) return false;
       if (!isAdmin && p.google_email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) return false;
       return followingIds.has(p.id);
     });
@@ -1868,7 +1892,7 @@ class Store {
     if (!pid) return null;
 
     try {
-      const stored = localStorage.getItem('rpg_wallpapers_v1');
+      const stored = safeStorage.getItem('rpg_wallpapers_v1');
       if (stored) {
         const map = JSON.parse(stored);
         if (map[`${pid}_${chatId}`]) {
@@ -1894,7 +1918,7 @@ class Store {
     if (!pid) return;
 
     try {
-      const stored = localStorage.getItem('rpg_wallpapers_v1');
+      const stored = safeStorage.getItem('rpg_wallpapers_v1');
       const map: Record<string, string> = stored ? JSON.parse(stored) : {};
 
       const key = `${pid}_${chatId}`;
@@ -1909,7 +1933,7 @@ class Store {
           map[`${pid}_default`] = wallpaperUrl;
         }
       }
-      localStorage.setItem('rpg_wallpapers_v1', JSON.stringify(map));
+      safeStorage.setItem('rpg_wallpapers_v1', JSON.stringify(map));
       this.notify();
     } catch (e) {
       console.warn('Erro ao salvar papel de parede:', e);
@@ -2880,9 +2904,9 @@ class Store {
     }
 
     chat.last_message = {
-      text: chat.is_group ? `${activeProfile.username}: ${previewText}` : previewText,
-      sender_id: activeProfile.id,
-      sender_name: activeProfile.full_name,
+      text: chat.is_group ? `${activeProfile?.username || 'membro'}: ${previewText}` : previewText,
+      sender_id: activeProfile?.id || '',
+      sender_name: activeProfile?.full_name || 'Usuário',
       created_at: newMsg.created_at
     };
     chat.updated_at = newMsg.created_at;
@@ -2995,10 +3019,13 @@ class Store {
         else if (lastMsg.media_url && !lastMsg.text) previewText = '📷 Foto';
         else if (lastMsg.youtube_track && !lastMsg.text) previewText = `🎵 ${lastMsg.youtube_track.title}`;
 
+        const senderUname = lastMsg.sender_profile?.username || 'membro';
+        const senderFullName = lastMsg.sender_profile?.full_name || 'Membro';
+
         chat.last_message = {
-          text: chat.is_group ? `${lastMsg.sender_profile.username}: ${previewText}` : previewText,
+          text: chat.is_group ? `${senderUname}: ${previewText}` : previewText,
           sender_id: lastMsg.sender_id,
-          sender_name: lastMsg.sender_profile.full_name,
+          sender_name: senderFullName,
           created_at: lastMsg.created_at
         };
       } else {

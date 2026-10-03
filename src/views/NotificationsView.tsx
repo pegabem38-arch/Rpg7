@@ -162,6 +162,9 @@ export const NotificationsView: React.FC<Props> = ({ onOpenProfile }) => {
           </div>
         ) : (
           filtered.map((notif) => {
+            if (!notif) return null;
+            const actor = notif.actor_profile || { id: 'unknown', username: 'usuario', avatar_url: '' };
+
             return (
               <div
                 key={notif.id}
@@ -178,12 +181,14 @@ export const NotificationsView: React.FC<Props> = ({ onOpenProfile }) => {
                   <div
                     onClick={(e) => {
                       e.stopPropagation();
-                      onOpenProfile(notif.actor_profile.id);
+                      if (actor.id && actor.id !== 'unknown') {
+                        onOpenProfile(actor.id);
+                      }
                     }}
                     className="flex items-center gap-2 cursor-pointer min-w-0"
                   >
                     <img
-                      src={notif.actor_profile.avatar_url}
+                      src={actor.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80'}
                       alt=""
                       className="w-10 h-10 rounded-full object-cover flex-shrink-0"
                     />
@@ -191,7 +196,7 @@ export const NotificationsView: React.FC<Props> = ({ onOpenProfile }) => {
                     <div className="min-w-0">
                       <p className="text-xs text-neutral-900 dark:text-white leading-tight">
                         <span className="font-bold mr-1">
-                          @{notif.actor_profile.username}
+                          @{actor.username || 'usuario'}
                         </span>
                         {notif.content}
                       </p>
