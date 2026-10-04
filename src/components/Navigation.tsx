@@ -4,6 +4,7 @@ import {
   ChevronDown, Sparkles, ShieldCheck
 } from 'lucide-react';
 import { Profile } from '../types';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface NavigationProps {
   currentTab: string;
@@ -163,6 +164,11 @@ export const Navigation: React.FC<NavigationProps> = ({
                 </span>
               </button>
             )}
+
+            {/* PWA In-App Install Prompt (Desktop) */}
+            <div className="pt-2">
+              <PWAInstallButton className="w-full justify-center py-2.5" />
+            </div>
           </nav>
         </div>
       </aside>
@@ -185,6 +191,9 @@ export const Navigation: React.FC<NavigationProps> = ({
         </button>
 
         <div className="flex items-center gap-2">
+          {/* PWA Install Button (Mobile Header) */}
+          <PWAInstallButton />
+
           {/* Admin Panel Button (Mobile) */}
           {isAdmin && onOpenAdminPanel && (
             <button

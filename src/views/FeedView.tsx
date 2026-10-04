@@ -5,6 +5,7 @@ import { store } from '../services/store';
 import { FeedPost } from '../components/FeedPost';
 import { StoryViewerModal } from '../components/StoryViewerModal';
 import { CachedImage } from '../components/CachedImage';
+import { PWAInstallButton } from '../components/PWAInstallButton';
 
 interface Props {
   onOpenProfile: (profileId: string) => void;
@@ -168,6 +169,9 @@ export const FeedView: React.FC<Props> = ({
             );
           })}
         </div>
+
+        {/* PWA In-App Install Prompt Banner */}
+        <PWAInstallButton variant="banner" className="mb-4" />
 
         {/* LISTA DE POSTAGENS */}
         <div className="space-y-6">
