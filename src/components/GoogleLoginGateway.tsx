@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { 
   GoogleUser, 
+  getStoredGoogleUser,
   setStoredGoogleUser, 
   validateGmailAddress,
   getOrCreateUserIdForEmail,
@@ -24,38 +25,43 @@ interface Props {
 }
 
 export const GoogleLoginGateway: React.FC<Props> = ({ onLogin }) => {
-  const [emailInput, setEmailInput] = useState('j20749073@gmail.com');
-  const [nameInput, setNameInput] = useState('João');
+  const lastUser = getStoredGoogleUser();
+  const [emailInput, setEmailInput] = useState(lastUser?.email || '');
+  const [nameInput, setNameInput] = useState(lastUser?.name || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [showManualForm, setShowManualForm] = useState(false);
+  const [showManualForm, setShowManualForm] = useState(!lastUser);
 
   const handleQuickLogin = (email: string, name: string) => {
     setErrorMsg(null);
     const validation = validateGmailAddress(email);
     if (!validation.isValid) {
-      setErrorMsg(validation.error || 'E-mail Google inválido.');
+      setErrorMsg(validation.error || 'Por favor, informe um e-mail do Google (@gmail.com).');
       return;
     }
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      const cleanEmail = email.trim().toLowerCase();
-      const stableUid = getOrCreateUserIdForEmail(cleanEmail);
-      const googleUser: GoogleUser = {
-        email: cleanEmail,
-        name: name.trim() || 'Usuário Google',
-        picture: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(cleanEmail)}`,
-        google_id: stableUid,
-        verified_email: true,
-        login_at: new Date().toISOString()
-      };
+    const cleanEmail = email.trim().toLowerCase();
+    const stableUid = getOrCreateUserIdForEmail(cleanEmail);
+    const googleUser: GoogleUser = {
+      email: cleanEmail,
+      name: name.trim() || 'Usuário Google',
+      picture: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(cleanEmail)}`,
+      google_id: stableUid,
+      verified_email: true,
+      login_at: new Date().toISOString()
+    };
 
-      setStoredGoogleUser(googleUser);
-      store.handleUserLogin(googleUser);
+    setStoredGoogleUser(googleUser);
+    
+    // Carrega perfis existentes da conta antes de prosseguir
+    store.handleUserLogin(googleUser).then(() => {
       setIsSubmitting(false);
       onLogin(googleUser);
-    }, 400);
+    }).catch(() => {
+      setIsSubmitting(false);
+      onLogin(googleUser);
+    });
   };
 
   const handleCustomSubmit = (e: React.FormEvent) => {
@@ -133,12 +139,12 @@ export const GoogleLoginGateway: React.FC<Props> = ({ onLogin }) => {
           )}
 
           {/* Recommended Google Quick-Connect */}
-          {!showManualForm ? (
+          {!showManualForm && lastUser ? (
             <div className="space-y-3">
               {/* Standard Quick-Connect Option */}
               <button
                 type="button"
-                onClick={() => handleQuickLogin('j20749073@gmail.com', 'João')}
+                onClick={() => handleQuickLogin(lastUser.email, lastUser.name)}
                 disabled={isSubmitting}
                 className="w-full group flex items-center justify-between p-3.5 bg-white hover:bg-neutral-100 text-neutral-900 rounded-2xl font-semibold shadow-lg hover:shadow-xl transition-all disabled:opacity-70 active:scale-[0.99]"
               >
@@ -148,7 +154,7 @@ export const GoogleLoginGateway: React.FC<Props> = ({ onLogin }) => {
                   </div>
                   <div className="text-left">
                     <div className="text-xs text-neutral-500 font-normal">Continuar como</div>
-                    <div className="text-sm font-bold text-neutral-900">j20749073@gmail.com</div>
+                    <div className="text-sm font-bold text-neutral-900">{lastUser.email}</div>
                   </div>
                 </div>
                 <ArrowRight className="w-4 h-4 text-neutral-500 group-hover:translate-x-0.5 transition-transform" />

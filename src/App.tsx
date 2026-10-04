@@ -20,6 +20,7 @@ import {
 } from './services/googleAuth';
 import { AdminSettingsModal } from './components/AdminSettingsModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { safeStorage } from './services/safeStorage';
 
 export default function App() {
   const [, setTick] = useState(0);
@@ -53,25 +54,52 @@ export default function App() {
   const profiles = store.getProfiles();
   const isAdmin = isAppAdmin(googleUser?.email);
 
-  // 1. STEP 1: Mandatory Google (Gmail) Login (Required once)
+  // 1. STEP 1: Mandatory Google (Gmail) Login / Account Creation Gateway
   if (!googleUser) {
     return (
       <GoogleLoginGateway 
-        onLogin={(user) => {
+        onLogin={async (user) => {
           setGoogleUser(user);
-          store.handleUserLogin(user);
+          await store.handleUserLogin(user);
           setTick((t) => t + 1);
         }} 
       />
     );
   }
 
-  // 2. STEP 2: If logged into Google but no profile created yet, show first profile creation
-  if (!activeProfile || profiles.length === 0) {
+  // 2. STEP 2: Only show Onboarding Profile Creation if the user HAS NO PROFILE YET (new user)!
+  // Usuários existentes que já possuem perfil entram diretamente na conta deles!
+  const isExplicitCreate = typeof window !== 'undefined' && (
+    window.location.search.includes('new_profile') || 
+    window.location.search.includes('create')
+  );
+
+  const isNewUserWithoutProfile = !activeProfile || profiles.length === 0;
+
+  if (isNewUserWithoutProfile || isExplicitCreate) {
     return (
       <OnboardingProfileView 
         googleUser={googleUser}
-        onCreated={() => setTick((t) => t + 1)} 
+        existingProfiles={profiles}
+        onCreated={() => {
+          if (isExplicitCreate && typeof window !== 'undefined') {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('new_profile');
+            url.searchParams.delete('create');
+            window.history.replaceState({}, '', url.toString());
+          }
+          setTick((t) => t + 1);
+        }} 
+        onSelectExisting={(profileId) => {
+          store.switchProfile(profileId);
+          if (isExplicitCreate && typeof window !== 'undefined') {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('new_profile');
+            url.searchParams.delete('create');
+            window.history.replaceState({}, '', url.toString());
+          }
+          setTick((t) => t + 1);
+        }}
         onLogout={() => {
           store.handleUserLogout();
           setGoogleUser(null);
@@ -153,6 +181,7 @@ export default function App() {
               profileId={viewedProfileId}
               onOpenProfile={handleOpenProfile}
               onOpenAccountSwitcher={() => setIsAccountSwitcherOpen(true)}
+              onOpenDirect={() => setCurrentTab('direct')}
               isAdmin={isAdmin}
               onOpenAdminPanel={() => setIsAdminModalOpen(true)}
             />

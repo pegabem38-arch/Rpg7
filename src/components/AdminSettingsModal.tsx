@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ShieldCheck, 
   X, 
@@ -43,11 +43,19 @@ export const AdminSettingsModal: React.FC<Props> = ({
   const [banPromptProfile, setBanPromptProfile] = useState<Profile | null>(null);
   const [banReason, setBanReason] = useState('Violação das diretrizes da comunidade');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [, setTick] = useState(0);
+
+  const hasAccess = isAppAdmin(currentUser?.email);
+
+  useEffect(() => {
+    if (isOpen && hasAccess) {
+      store.loadAllProfilesForAdmin();
+      store.loadReportsForAdmin();
+    }
+    return store.subscribe(() => setTick((t) => t + 1));
+  }, [isOpen, hasAccess]);
 
   if (!isOpen) return null;
-
-  // Strict Security Check: Only allow cedrico124i@gmail.com
-  const hasAccess = isAppAdmin(currentUser?.email);
   if (!hasAccess) {
     return (
       <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">

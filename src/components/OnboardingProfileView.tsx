@@ -13,7 +13,7 @@ import {
   LogOut,
   ChevronRight
 } from 'lucide-react';
-import { ProfileType } from '../types';
+import { Profile, ProfileType } from '../types';
 import { store } from '../services/store';
 import { 
   GoogleUser, 
@@ -33,20 +33,25 @@ const AVATAR_PRESETS = [
 
 interface OnboardingProfileViewProps {
   googleUser: GoogleUser;
-  onCreated: () => void;
+  existingProfiles?: Profile[];
+  onCreated: (newProfileId?: string) => void;
+  onSelectExisting?: (profileId: string) => void;
   onLogout?: () => void;
 }
 
 export const OnboardingProfileView: React.FC<OnboardingProfileViewProps> = ({ 
   googleUser, 
+  existingProfiles = [],
   onCreated,
+  onSelectExisting,
   onLogout 
 }) => {
   const derived = deriveProfileFromGoogle(googleUser);
 
   // Form Fields pre-filled with Google account data
-  const [fullName, setFullName] = useState(derived.fullName || 'João');
-  const [username, setUsername] = useState(derived.username || 'joao');
+  const hasExisting = existingProfiles.length > 0;
+  const [fullName, setFullName] = useState(hasExisting ? '' : (derived.fullName || 'João'));
+  const [username, setUsername] = useState(hasExisting ? '' : (derived.username || 'joao'));
   const [avatarUrl, setAvatarUrl] = useState(derived.avatarUrl || AVATAR_PRESETS[0]);
   const [bio, setBio] = useState('Bem-vindo ao meu perfil no RPG!');
   const [website, setWebsite] = useState('');
@@ -87,7 +92,7 @@ export const OnboardingProfileView: React.FC<OnboardingProfileViewProps> = ({
       return;
     }
 
-    store.createProfile({
+    const newProf = store.createProfile({
       full_name: fullName.trim(),
       username: cleanUsername,
       avatar_url: avatarUrl,
@@ -99,7 +104,7 @@ export const OnboardingProfileView: React.FC<OnboardingProfileViewProps> = ({
       user_id: googleUser.google_id
     });
 
-    onCreated();
+    onCreated(newProf.id);
   };
 
   return (
@@ -155,17 +160,52 @@ export const OnboardingProfileView: React.FC<OnboardingProfileViewProps> = ({
           </button>
         </div>
 
+        {/* Existing profiles notice for multi-device */}
+        {hasExisting && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 mb-6">
+            <div className="flex items-start gap-3">
+              <Sparkles className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-amber-300">
+                  Outro Dispositivo Conectado
+                </h3>
+                <p className="text-xs text-neutral-300 mt-1">
+                  Crie um novo perfil para este dispositivo abaixo, ou se preferir, selecione um perfil já existente da sua conta:
+                </p>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {existingProfiles.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => onSelectExisting?.(p.id)}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-xs font-semibold text-white transition-all active:scale-95 shadow-sm"
+                    >
+                      {p.avatar_url && (
+                        <img src={p.avatar_url} alt={p.username} className="w-4 h-4 rounded-full object-cover" />
+                      )}
+                      <span>Entrar como @{p.username}</span>
+                      <ChevronRight className="w-3.5 h-3.5 text-neutral-400" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Heading */}
         <div className="text-left mb-6">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-semibold mb-2">
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Crie seu Primeiro Perfil</span>
+            <span>{hasExisting ? 'Criar Novo Perfil para este Dispositivo' : 'Crie seu Primeiro Perfil'}</span>
           </div>
           <h2 className="text-2xl font-bold tracking-tight text-white">
-            Configure seu perfil no RPG
+            {hasExisting ? 'Criar Novo Perfil' : 'Configure seu perfil no RPG'}
           </h2>
           <p className="text-sm text-neutral-400 mt-1">
-            Com esta conta Google, você pode criar quantos perfis quiser depois (pessoal, RPG, trabalho) sem precisar fazer login novamente.
+            {hasExisting 
+              ? 'Preencha os dados abaixo para criar um novo perfil ou personagem neste dispositivo.' 
+              : 'Com esta conta Google, você pode criar quantos perfis quiser depois sem precisar fazer login novamente.'}
           </p>
         </div>
 

@@ -914,27 +914,44 @@ class Store {
     }
   }
 
+  public findAnyProfile(profileIdOrUsername?: string | null): Profile | undefined {
+    return this.getProfileById(profileIdOrUsername || undefined);
+  }
+
   public getProfileById(profileIdOrUsername?: string): Profile | undefined {
     if (!profileIdOrUsername) return undefined;
     const target = profileIdOrUsername.toLowerCase().trim();
 
-    // 1. Busca nos perfis do usuário
+    // 1. Busca nos perfis do usuário (incluindo todos os perfis locais da conta)
     const myProfile = (this.state.profiles || []).find(
-      (p) => p && (p.id === target || (p.username && p.username.toLowerCase() === target))
+      (p) => p && ((p.id && p.id.toLowerCase() === target) || (p.username && p.username.toLowerCase() === target))
     );
     if (myProfile) return myProfile;
 
     // 2. Busca no cache de perfis públicos
     const publicProfile = Array.from(this.publicProfilesCache.values()).find(
-      (p) => p && (p.id === target || (p.username && p.username.toLowerCase() === target))
+      (p) => p && ((p.id && p.id.toLowerCase() === target) || (p.username && p.username.toLowerCase() === target))
     );
     if (publicProfile) return publicProfile;
 
     // 3. Busca em posts/stories carregados
     const postWithAuthor = (this.state.posts || []).find(
-      (p) => p && (p.profile_id === target || (p.profile?.username && p.profile.username.toLowerCase() === target))
+      (p) => p && (
+        (p.profile_id && p.profile_id.toLowerCase() === target) ||
+        (p.profile?.id && p.profile.id.toLowerCase() === target) ||
+        (p.profile?.username && p.profile.username.toLowerCase() === target)
+      )
     );
     if (postWithAuthor?.profile) return postWithAuthor.profile;
+
+    const storyWithAuthor = (this.state.stories || []).find(
+      (s) => s && (
+        (s.profile_id && s.profile_id.toLowerCase() === target) ||
+        (s.profile?.id && s.profile.id.toLowerCase() === target) ||
+        (s.profile?.username && s.profile.username.toLowerCase() === target)
+      )
+    );
+    if (storyWithAuthor?.profile) return storyWithAuthor.profile;
 
     return undefined;
   }
@@ -947,7 +964,15 @@ class Store {
 
     if (myId) seen.add(myId);
 
-    // Perfis do cache público
+    // 1. Outros perfis do próprio usuário (permite que o dono interaja e siga seus outros perfis)
+    for (const p of (this.state.profiles || [])) {
+      if (p && p.id && p.id !== myId && !seen.has(p.id)) {
+        seen.add(p.id);
+        list.push(p);
+      }
+    }
+
+    // 2. Perfis do cache público
     for (const p of this.publicProfilesCache.values()) {
       if (p && p.id && !seen.has(p.id) && p.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
         seen.add(p.id);
@@ -955,7 +980,7 @@ class Store {
       }
     }
 
-    // Autores de posts já carregados
+    // 3. Autores de posts já carregados
     for (const post of (this.state.posts || [])) {
       if (post && post.profile && post.profile.id && !seen.has(post.profile.id) && post.profile.id !== myId) {
         if (post.profile.google_email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
@@ -1017,12 +1042,128 @@ class Store {
   }
 
   public getAllProfiles(): Profile[] {
-    return this.getProfiles();
+    const currentGoogleUser = getStoredGoogleUser();
+    const isAdmin = isAppAdmin(currentGoogleUser?.email);
+    if (!isAdmin) {
+      return this.getProfiles();
+    }
+
+    // Para o Administrador: consolida TODOS os perfis do sistema (locais, cache público e autores de publicações)
+    const map = new Map<string, Profile>();
+
+    for (const p of this.state.profiles || []) {
+      if (p && p.id) map.set(p.id, p);
+    }
+
+    for (const p of this.publicProfilesCache.values()) {
+      if (p && p.id && !map.has(p.id)) map.set(p.id, p);
+    }
+
+    for (const post of this.state.posts || []) {
+      if (post?.profile?.id && !map.has(post.profile.id)) {
+        map.set(post.profile.id, post.profile);
+      }
+    }
+
+    for (const story of this.state.stories || []) {
+      if (story?.profile?.id && !map.has(story.profile.id)) {
+        map.set(story.profile.id, story.profile);
+      }
+    }
+
+    return Array.from(map.values());
+  }
+
+  public async loadAllProfilesForAdmin() {
+    const currentGoogleUser = getStoredGoogleUser();
+    if (!isAppAdmin(currentGoogleUser?.email)) return;
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+
+    try {
+      const { data: remoteProfiles, error } = await supabase.from('profiles').select('*');
+      if (!error && remoteProfiles && remoteProfiles.length > 0) {
+        for (const rp of remoteProfiles) {
+          if (!rp || !rp.id) continue;
+          this.publicProfilesCache.set(rp.id, rp);
+          if (rp.username) this.publicProfilesCache.set(rp.username.toLowerCase(), rp);
+
+          // Se o perfil já estiver no state, sincroniza dados
+          const existingIdx = (this.state.profiles || []).findIndex((p) => p.id === rp.id);
+          if (existingIdx !== -1) {
+            this.state.profiles[existingIdx] = { ...this.state.profiles[existingIdx], ...rp };
+          }
+        }
+        this.saveState();
+        this.notify();
+      }
+    } catch (err) {
+      console.warn('Erro ao carregar perfis globais para o painel admin:', err);
+    }
+  }
+
+  public async loadReportsForAdmin() {
+    const currentGoogleUser = getStoredGoogleUser();
+    if (!isAppAdmin(currentGoogleUser?.email)) return;
+
+    if (!Array.isArray(this.state.reports)) {
+      this.state.reports = [];
+    }
+
+    // 1. Carrega denúncias compartilhadas no armazenamento global
+    try {
+      const sharedReportsRaw = safeStorage.getItem('rpg_global_reports_v1');
+      if (sharedReportsRaw) {
+        const sharedReports: ProfileReport[] = JSON.parse(sharedReportsRaw);
+        if (Array.isArray(sharedReports)) {
+          const existingIds = new Set(this.state.reports.map((r) => r.id));
+          for (const sr of sharedReports) {
+            if (!existingIds.has(sr.id)) {
+              this.state.reports.push(sr);
+              existingIds.add(sr.id);
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // 2. Carrega denúncias salvas no Supabase
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data: remoteReports, error } = await supabase
+          .from('reports')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && remoteReports && remoteReports.length > 0) {
+          const existingIds = new Set(this.state.reports.map((r) => r.id));
+          for (const rr of remoteReports) {
+            if (!existingIds.has(rr.id)) {
+              this.state.reports.push(rr);
+              existingIds.add(rr.id);
+            } else {
+              const idx = this.state.reports.findIndex((r) => r.id === rr.id);
+              if (idx !== -1) {
+                this.state.reports[idx] = { ...this.state.reports[idx], ...rr };
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao carregar denúncias do Supabase para o admin:', err);
+      }
+    }
+
+    this.saveState();
+    this.notify();
   }
 
   public isProfileBanned(profileId?: string): boolean {
     const id = profileId || this.state.activeProfileId;
-    const profile = this.state.profiles.find((p) => p.id === id);
+    if (!id) return false;
+    const profile = this.findAnyProfile(id);
     return !!profile?.banned;
   }
 
@@ -1032,7 +1173,7 @@ class Store {
     const currentUid = currentGoogleUser?.google_id;
     const currentEmail = currentGoogleUser?.email?.toLowerCase();
 
-    const targetProfile = this.state.profiles.find((p) => p.id === profileId);
+    let targetProfile = this.findAnyProfile(profileId);
     if (!targetProfile) return null;
 
     const isOwner = (currentUid && targetProfile.user_id === currentUid) || (currentEmail && targetProfile.google_email?.toLowerCase() === currentEmail);
@@ -1041,57 +1182,75 @@ class Store {
       return null;
     }
 
-    let updatedProfile: Profile | null = null;
-    this.state.profiles = this.state.profiles.map((p) => {
-      if (p.id === profileId) {
-        updatedProfile = { ...p, ...data };
-        return updatedProfile;
+    const updatedProfile: Profile = { ...targetProfile, ...data };
+
+    // Atualiza em state.profiles
+    const idx = (this.state.profiles || []).findIndex((p) => p.id === targetProfile!.id);
+    if (idx !== -1) {
+      this.state.profiles[idx] = updatedProfile;
+    } else if (isAdmin) {
+      this.state.profiles.push(updatedProfile);
+    }
+
+    // Atualiza no cache público
+    this.publicProfilesCache.set(updatedProfile.id, updatedProfile);
+    if (updatedProfile.username) {
+      this.publicProfilesCache.set(updatedProfile.username.toLowerCase(), updatedProfile);
+    }
+
+    // Atualiza referências em posts
+    this.state.posts = (this.state.posts || []).map((post) => {
+      if (post.profile_id === profileId || post.profile?.id === profileId) {
+        return { ...post, profile: { ...post.profile, ...data } };
       }
-      return p;
+      return post;
     });
 
-    if (updatedProfile) {
-      const pSnap = updatedProfile as Profile;
-      this.state.posts = this.state.posts.map((post) => {
-        if (post.profile_id === profileId) {
-          return { ...post, profile: { ...post.profile, ...data } };
-        }
-        return post;
-      });
-      this.state.stories = this.state.stories.map((story) => {
-        if (story.profile_id === profileId) {
-          return { ...story, profile: { ...story.profile, ...data } };
-        }
-        return story;
-      });
-      this.state.reels = this.state.reels.map((reel) => {
-        if (reel.profile_id === profileId) {
-          return { ...reel, profile: { ...reel.profile, ...data } };
-        }
-        return reel;
-      });
-      if (data.avatar_url) {
-        imageCache.set(`avatar_${profileId}`, data.avatar_url);
-        imageCache.set(data.avatar_url, data.avatar_url);
+    // Atualiza referências em stories
+    this.state.stories = (this.state.stories || []).map((story) => {
+      if (story.profile_id === profileId || story.profile?.id === profileId) {
+        return { ...story, profile: { ...story.profile, ...data } };
       }
-      this.saveState();
+      return story;
+    });
+
+    // Atualiza referências em reels
+    this.state.reels = (this.state.reels || []).map((reel) => {
+      if (reel.profile_id === profileId || reel.profile?.id === profileId) {
+        return { ...reel, profile: { ...reel.profile, ...data } };
+      }
+      return reel;
+    });
+
+    if (data.avatar_url) {
+      imageCache.set(`avatar_${profileId}`, data.avatar_url);
+      imageCache.set(data.avatar_url, data.avatar_url);
     }
+
+    this.saveState();
+
+    // Sincroniza alteração no Supabase
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      Promise.resolve(supabase.from('profiles').update(data).eq('id', profileId)).catch(() => {});
+    }
+
     return updatedProfile;
   }
 
   public toggleVerifyProfile(profileId: string): boolean {
-    const profile = this.state.profiles.find((p) => p.id === profileId);
-    if (!profile) return false;
-    const newStatus = !profile.verified;
-    this.updateProfileById(profileId, { verified: newStatus });
+    const targetProfile = this.findAnyProfile(profileId);
+    if (!targetProfile) return false;
+    const newStatus = !targetProfile.verified;
+    this.updateProfileById(targetProfile.id, { verified: newStatus });
     return newStatus;
   }
 
   public toggleBanProfile(profileId: string, reason?: string): boolean {
-    const profile = this.state.profiles.find((p) => p.id === profileId);
-    if (!profile) return false;
-    const newStatus = !profile.banned;
-    this.updateProfileById(profileId, {
+    const targetProfile = this.findAnyProfile(profileId);
+    if (!targetProfile) return false;
+    const newStatus = !targetProfile.banned;
+    this.updateProfileById(targetProfile.id, {
       banned: newStatus,
       banned_at: newStatus ? new Date().toISOString() : undefined,
       ban_reason: newStatus ? (reason || 'Violação das regras e diretrizes da comunidade') : undefined
@@ -1111,12 +1270,19 @@ class Store {
       return { success: false, message: 'Você precisa estar logado para enviar uma denúncia.' };
     }
 
-    const reportedProfile = (this.state.profiles || []).find(
-      (p) => p && (p.id === data.reported_profile_id || p.username === data.reported_profile_id)
-    );
-    if (!reportedProfile) {
-      return { success: false, message: 'Perfil denunciado não encontrado.' };
-    }
+    const reportedProfile = this.findAnyProfile(data.reported_profile_id) || {
+      id: data.reported_profile_id,
+      user_id: data.reported_profile_id,
+      username: data.reported_profile_id,
+      full_name: 'Perfil Denunciado',
+      avatar_url: '',
+      bio: '',
+      profile_type: 'pessoal' as ProfileType,
+      followers_count: 0,
+      following_count: 0,
+      posts_count: 0,
+      created_at: new Date().toISOString()
+    };
 
     if (
       activeProfile.id === reportedProfile.id ||
@@ -1150,6 +1316,16 @@ class Store {
     this.state.reports.unshift(newReport);
     this.saveState();
 
+    // Salva na chave global de denúncias compartilhada
+    try {
+      const sharedReportsRaw = safeStorage.getItem('rpg_global_reports_v1');
+      const sharedReports: ProfileReport[] = sharedReportsRaw ? JSON.parse(sharedReportsRaw) : [];
+      if (Array.isArray(sharedReports)) {
+        sharedReports.unshift(newReport);
+        safeStorage.setItem('rpg_global_reports_v1', JSON.stringify(sharedReports.slice(0, 100)));
+      }
+    } catch {}
+
     // Sincroniza com Supabase se a tabela reports estiver configurada
     const supabase = getSupabaseClient();
     if (supabase) {
@@ -1178,8 +1354,8 @@ class Store {
     }
 
     return (this.state.reports || []).map((r) => {
-      const reported = this.state.profiles.find((p) => p.id === r.reported_profile_id) || r.reported_profile;
-      const reporter = this.state.profiles.find((p) => p.id === r.reporter_profile_id) || r.reporter_profile;
+      const reported = this.findAnyProfile(r.reported_profile_id) || r.reported_profile;
+      const reporter = this.findAnyProfile(r.reporter_profile_id) || r.reporter_profile;
       return {
         ...r,
         reported_profile: reported,
@@ -1382,81 +1558,54 @@ class Store {
   public isFollowing(targetProfileId: string, followerId?: string): boolean {
     const activeId = followerId || this.state.activeProfileId;
     if (!activeId || !targetProfileId) return false;
-    const activeProf = (this.state.profiles || []).find((p) => p && (p.id === activeId || p.username === activeId)) || this.getActiveProfile();
-    const targetProf = (this.state.profiles || []).find((p) => p && (p.id === targetProfileId || p.username === targetProfileId));
-    if (!activeProf || !targetProf) return false;
-    if (activeProf.id === targetProf.id) return false;
-    if (activeProf.username && targetProf.username && activeProf.username.toLowerCase() === targetProf.username.toLowerCase()) return false;
+    if (activeId === targetProfileId) return false;
 
-    return (this.state.followers || []).some(
-      (f) => f && f.follower_id === activeProf.id && f.following_id === targetProf.id
-    );
+    const targetProf = this.findAnyProfile(targetProfileId);
+    const targetId = targetProf ? targetProf.id : targetProfileId;
+    if (activeId === targetId) return false;
+
+    return (this.state.followers || []).some((f) => {
+      if (!f || f.follower_id !== activeId) return false;
+      return (
+        f.following_id === targetId ||
+        f.following_id === targetProfileId ||
+        (targetProf && f.following_id === targetProf.username)
+      );
+    });
   }
 
   public sanitizeFollowers() {
-    if (!this.state.profiles || this.state.profiles.length === 0) {
-      this.state.followers = [];
-      return;
-    }
-
     const seen = new Set<string>();
     const cleanFollowers: FollowerRelation[] = [];
 
-    // Filtra apenas relações válidas entre perfis existentes reais
+    // Preserva apenas relações válidas onde o perfil não segue a si mesmo
     for (const f of this.state.followers || []) {
-      if (!f.follower_id || !f.following_id) continue;
+      if (!f || !f.follower_id || !f.following_id) continue;
       if (f.follower_id === f.following_id) continue;
 
-      const followerProf = this.state.profiles.find(
-        (p) => p.id === f.follower_id || (p.username && p.username.toLowerCase() === f.follower_id.toLowerCase())
-      );
-      const followingProf = this.state.profiles.find(
-        (p) => p.id === f.following_id || (p.username && p.username.toLowerCase() === f.following_id.toLowerCase())
-      );
-
-      // Regra obrigatória: Ambos os perfis DEVEM existir na lista de perfis do app
-      if (followerProf && followingProf) {
-        // Regra 1: O mesmo perfil NUNCA pode seguir a si mesmo
-        if (
-          followerProf.id === followingProf.id ||
-          (followerProf.username &&
-            followingProf.username &&
-            followerProf.username.toLowerCase() === followingProf.username.toLowerCase())
-        ) {
-          continue;
-        }
-
-        // Normaliza para os IDs canônicos
-        const normFollowerId = followerProf.id;
-        const normFollowingId = followingProf.id;
-        const key = `${normFollowerId}:${normFollowingId}`;
-
-        if (!seen.has(key)) {
-          seen.add(key);
-          cleanFollowers.push({
-            follower_id: normFollowerId,
-            following_id: normFollowingId,
-            created_at: f.created_at || new Date().toISOString()
-          });
-        }
+      const key = `${f.follower_id}:${f.following_id}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        cleanFollowers.push(f);
       }
-      // Relações órfãs (com perfis que não existem mais ou dados fantasmas) são descartadas automaticamente aqui
     }
 
     this.state.followers = cleanFollowers;
+    this.recalculateFollowerCounts();
+  }
 
-    // Recalcula contadores exatos para manter integridade matemática absoluta
-    const maxPossibleFollowers = Math.max(0, this.state.profiles.length - 1);
+  public recalculateFollowerCounts() {
     for (const p of this.state.profiles || []) {
-      const actualFollowers = this.state.followers.filter(
-        (f) => f.following_id === p.id && f.follower_id !== p.id
+      if (!p || !p.id) continue;
+      const followersCount = (this.state.followers || []).filter(
+        (f) => f && f.following_id === p.id && f.follower_id !== p.id
       ).length;
-      const actualFollowing = this.state.followers.filter(
-        (f) => f.follower_id === p.id && f.following_id !== p.id
+      const followingCount = (this.state.followers || []).filter(
+        (f) => f && f.follower_id === p.id && f.following_id !== p.id
       ).length;
 
-      p.followers_count = Math.min(actualFollowers, maxPossibleFollowers);
-      p.following_count = Math.min(actualFollowing, maxPossibleFollowers);
+      p.followers_count = followersCount;
+      p.following_count = followingCount;
     }
   }
 
@@ -1495,127 +1644,149 @@ class Store {
     }
   }
 
-  public toggleFollow(targetProfileId: string) {
+  public toggleFollow(targetProfileId: string): boolean {
     const activeProfile = this.getActiveProfile();
     const activeId = activeProfile?.id;
-    if (!activeId || !targetProfileId) return;
+    if (!activeId || !targetProfileId) return false;
 
-    const targetProfile = (this.state.profiles || []).find((p) => p && (p.id === targetProfileId || p.username === targetProfileId));
-    if (!targetProfile) return;
+    const targetProfile = this.findAnyProfile(targetProfileId);
+    const targetId = targetProfile ? targetProfile.id : targetProfileId;
 
-    const targetId = targetProfile.id;
-
-    // Regra 1: O mesmo perfil NÃO pode seguir a si mesmo
-    if (activeId === targetId || (activeProfile && targetProfile && activeProfile.username && targetProfile.username && activeProfile.username.toLowerCase() === targetProfile.username.toLowerCase())) {
+    // Regra: O mesmo perfil não pode seguir a si mesmo (mas perfis diferentes da mesma conta PODEM seguir um ao outro!)
+    if (
+      activeId === targetId ||
+      (activeProfile.username &&
+        targetProfile?.username &&
+        activeProfile.username.toLowerCase() === targetProfile.username.toLowerCase())
+    ) {
       console.warn('Bloqueado: O mesmo perfil não pode seguir a si mesmo.');
-      return;
+      return false;
     }
 
     const currentlyFollowing = this.isFollowing(targetId, activeId);
 
-    // 1. ATUALIZAÇÃO OTIMISTA INSTANTÂNEA NO ESTADO LOCAL (ZERO ATRASO / 0ms)
     if (currentlyFollowing) {
-      this.state.followers = this.state.followers.filter(
-        (f) => !(f.follower_id === activeProfile.id && f.following_id === targetProfile.id)
+      this.state.followers = (this.state.followers || []).filter(
+        (f) =>
+          !(
+            f.follower_id === activeId &&
+            (f.following_id === targetId ||
+              f.following_id === targetProfileId ||
+              (targetProfile && f.following_id === targetProfile.username))
+          )
       );
     } else {
-      // Remove duplicatas preventivamente antes de adicionar
-      this.state.followers = this.state.followers.filter(
-        (f) => !(f.follower_id === activeProfile.id && f.following_id === targetProfile.id)
+      this.state.followers = (this.state.followers || []).filter(
+        (f) =>
+          !(
+            f.follower_id === activeId &&
+            (f.following_id === targetId ||
+              f.following_id === targetProfileId ||
+              (targetProfile && f.following_id === targetProfile.username))
+          )
       );
       this.state.followers.push({
-        follower_id: activeProfile.id,
-        following_id: targetProfile.id,
+        follower_id: activeId,
+        following_id: targetId,
         created_at: new Date().toISOString()
       });
+
+      if (targetProfile) {
+        this.addNotification({
+          recipient_profile_id: targetProfile.id,
+          actor_profile: activeProfile,
+          type: 'follow',
+          content: 'começou a seguir você.'
+        });
+      }
     }
 
-    // Atualiza contadores imediatamente no perfil ativo e no perfil alvo
+    // Atualiza contadores em tempo real para o perfil ativo e demais perfis
     this.sanitizeFollowers();
-    this.saveState(); // Notifica React na mesma hora sem nenhum delay!
+    this.saveState();
 
-    // 2. SINCRONIZAÇÃO EM SEGUNDO PLANO COM SUPABASE (Não bloqueia a UI nem o clique)
+    // Sincronização assíncrona com Supabase
     (async () => {
       try {
-        await this.saveProfileToSupabase(activeProfile);
-        await this.saveProfileToSupabase(targetProfile);
+        if (activeProfile) await this.saveProfileToSupabase(activeProfile);
+        if (targetProfile) await this.saveProfileToSupabase(targetProfile);
 
         const supabase = getSupabaseClient();
         if (!supabase) return;
 
         if (currentlyFollowing) {
-          const { error } = await supabase.from('followers').delete().match({
-            follower_id: activeProfile.id,
-            following_id: targetProfile.id
+          await supabase.from('followers').delete().match({
+            follower_id: activeId,
+            following_id: targetId
           });
-          if (error) console.warn('Aviso ao remover seguidor no Supabase:', error);
         } else {
-          const { error } = await supabase.from('followers').upsert({
-            follower_id: activeProfile.id,
-            following_id: targetProfile.id,
-            created_at: new Date().toISOString()
-          }, { onConflict: 'follower_id,following_id' });
-          if (error) console.warn('Aviso ao persistir seguidor no Supabase:', error);
-
-          this.addNotification({
-            recipient_profile_id: targetProfile.id,
-            actor_profile: activeProfile,
-            type: 'follow',
-            content: 'começou a seguir você.'
-          });
+          await supabase.from('followers').upsert(
+            {
+              follower_id: activeId,
+              following_id: targetId,
+              created_at: new Date().toISOString()
+            },
+            { onConflict: 'follower_id,following_id' }
+          );
         }
       } catch (err) {
-        console.warn('Erro ao persistir seguidor no Supabase em segundo plano:', err);
+        console.warn('Erro ao sincronizar seguidor com Supabase:', err);
       }
     })();
+
+    return !currentlyFollowing;
   }
 
   public getFollowers(profileId: string): Profile[] {
     const currentGoogleUser = getStoredGoogleUser();
     const isAdmin = isAppAdmin(currentGoogleUser?.email);
-    const targetProf = this.state.profiles.find((p) => p.id === profileId || p.username === profileId);
+    const targetProf = this.findAnyProfile(profileId);
     if (!targetProf) return [];
 
     const targetId = targetProf.id;
     const targetUsername = (targetProf.username || '').toLowerCase();
 
-    const followerIds = new Set(
-      (this.state.followers || [])
-        .filter((f) => f && f.following_id === targetId && f.follower_id !== targetId)
-        .map((f) => f.follower_id)
-    );
+    const followerIds = (this.state.followers || [])
+      .filter((f) => f && f.following_id === targetId && f.follower_id !== targetId)
+      .map((f) => f.follower_id);
 
-    return (this.state.profiles || []).filter((p) => {
-      if (!p || !p.id) return false;
-      // O próprio perfil NUNCA pode estar em sua lista de seguidores
-      if (p.id === targetId || (p.username && p.username.toLowerCase() === targetUsername)) return false;
-      if (!isAdmin && p.google_email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) return false;
-      return followerIds.has(p.id);
-    });
+    const result: Profile[] = [];
+    for (const fid of followerIds) {
+      const p = this.findAnyProfile(fid);
+      if (p && p.id !== targetId && p.username.toLowerCase() !== targetUsername) {
+        if (!isAdmin && p.google_email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) continue;
+        if (!result.some((r) => r.id === p.id)) {
+          result.push(p);
+        }
+      }
+    }
+    return result;
   }
 
   public getFollowing(profileId: string): Profile[] {
     const currentGoogleUser = getStoredGoogleUser();
     const isAdmin = isAppAdmin(currentGoogleUser?.email);
-    const targetProf = (this.state.profiles || []).find((p) => p && (p.id === profileId || p.username === profileId));
+    const targetProf = this.findAnyProfile(profileId);
     if (!targetProf) return [];
 
     const targetId = targetProf.id;
     const targetUsername = (targetProf.username || '').toLowerCase();
 
-    const followingIds = new Set(
-      (this.state.followers || [])
-        .filter((f) => f && f.follower_id === targetId && f.following_id !== targetId)
-        .map((f) => f.following_id)
-    );
+    const followingIds = (this.state.followers || [])
+      .filter((f) => f && f.follower_id === targetId && f.following_id !== targetId)
+      .map((f) => f.following_id);
 
-    return (this.state.profiles || []).filter((p) => {
-      if (!p || !p.id) return false;
-      // O próprio perfil NUNCA pode estar em sua lista de seguindo
-      if (p.id === targetId || (p.username && p.username.toLowerCase() === targetUsername)) return false;
-      if (!isAdmin && p.google_email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) return false;
-      return followingIds.has(p.id);
-    });
+    const result: Profile[] = [];
+    for (const fid of followingIds) {
+      const p = this.findAnyProfile(fid);
+      if (p && p.id !== targetId && p.username.toLowerCase() !== targetUsername) {
+        if (!isAdmin && p.google_email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) continue;
+        if (!result.some((r) => r.id === p.id)) {
+          result.push(p);
+        }
+      }
+    }
+    return result;
   }
 
   // --- POSTS ---
@@ -2226,10 +2397,13 @@ class Store {
 
   public getOrCreateDirectChat(targetProfileId: string): Chat {
     const activeProfile = this.getActiveProfile();
-    const targetProfile = this.state.profiles.find((p) => p && p.id === targetProfileId);
+    const targetProfile = this.findAnyProfile(targetProfileId);
 
     if (!activeProfile) throw new Error('É necessário ter um perfil ativo para iniciar uma conversa.');
     if (!targetProfile) throw new Error('Perfil de destino não encontrado.');
+    if (activeProfile.id === targetProfile.id) {
+      throw new Error('Não é possível iniciar conversa consigo mesmo.');
+    }
 
     // Look for existing 1-on-1 chat
     const existing = (this.state.chats || []).find(
@@ -2239,7 +2413,7 @@ class Store {
         Array.isArray(c.participants) &&
         c.participants.length === 2 &&
         c.participants.some((p) => p && p.id === activeProfile.id) &&
-        c.participants.some((p) => p && p.id === targetProfileId)
+        c.participants.some((p) => p && p.id === targetProfile.id)
     );
 
     if (existing) return existing;

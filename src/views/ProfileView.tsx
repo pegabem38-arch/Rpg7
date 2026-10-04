@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Grid, List, Film, Bookmark, Settings, Edit3, ExternalLink, UserCheck, UserPlus, X, Check, Globe, Upload, Trash2, Repeat2, AtSign,
-  ShieldCheck, Ban, CheckCircle, RotateCcw, Crown, User, Flag
+  ShieldCheck, Ban, CheckCircle, RotateCcw, Crown, User, Flag, MessageCircle, Repeat, Sparkles
 } from 'lucide-react';
 import { Profile, ProfileType, Post } from '../types';
 import { store } from '../services/store';
@@ -18,6 +18,7 @@ interface Props {
   profileId?: string; // If undefined, displays active profile
   onOpenProfile: (id: string) => void;
   onOpenAccountSwitcher: () => void;
+  onOpenDirect?: (chatId?: string) => void;
   isAdmin?: boolean;
   onOpenAdminPanel?: () => void;
 }
@@ -26,6 +27,7 @@ export const ProfileView: React.FC<Props> = ({
   profileId,
   onOpenProfile,
   onOpenAccountSwitcher,
+  onOpenDirect,
   isAdmin,
   onOpenAdminPanel
 }) => {
@@ -33,7 +35,10 @@ export const ProfileView: React.FC<Props> = ({
   const activeProfile = store.getActiveProfile();
   const targetId = profileId || activeProfile?.id;
   const profile = (profileId ? store.getProfileById(targetId) : activeProfile) || activeProfile;
-  const isSelf = (activeProfile && profile) ? (activeProfile.id === profile.id || activeProfile.username === profile.username) : true;
+  const isExactActive = (activeProfile && profile) ? (activeProfile.id === profile.id || (activeProfile.username && profile.username && activeProfile.username.toLowerCase() === profile.username.toLowerCase())) : true;
+  const isSelf = isExactActive;
+  const myProfiles = store.getProfiles();
+  const isMyOtherProfile = !isExactActive && myProfiles.some((p) => p && (p.id === profile?.id || (p.username && profile?.username && p.username.toLowerCase() === profile.username.toLowerCase())));
 
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -101,6 +106,17 @@ export const ProfileView: React.FC<Props> = ({
       </div>
     );
   }
+
+  const handleStartDirectChat = () => {
+    try {
+      const chat = store.getOrCreateDirectChat(profile.id);
+      if (onOpenDirect) {
+        onOpenDirect(chat.id);
+      }
+    } catch (e: any) {
+      console.warn('Erro ao abrir conversa:', e?.message);
+    }
+  };
 
   const isFollowing = store.isFollowing(profile.id);
   const userStories = store.getStories().filter((s) => s && s.profile_id === profile.id);
@@ -337,30 +353,36 @@ export const ProfileView: React.FC<Props> = ({
                     <Crown className="w-3 h-3" /> Admin
                   </span>
                 )}
+                {isMyOtherProfile && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-500 border border-amber-500/30 flex items-center gap-1 shadow-sm">
+                    <Sparkles className="w-3 h-3" /> Seu outro perfil
+                  </span>
+                )}
               </div>
 
               <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-300 uppercase inline-block self-center sm:self-auto">
                 {profile.profile_type}
               </span>
 
-              <div className="flex items-center justify-center gap-2 pt-1 sm:pt-0">
+              <div className="flex items-center justify-center flex-wrap gap-2 pt-1 sm:pt-0">
                 {isSelf ? (
                   <>
                     <button
                       onClick={handleOpenEditModal}
-                      className="px-4 py-1.5 rounded-xl border border-neutral-300 dark:border-neutral-700 font-bold text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                      className="px-4 py-1.5 rounded-xl border border-neutral-300 dark:border-neutral-700 font-bold text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
                     >
                       Editar Perfil (@)
                     </button>
                     <button
                       onClick={onOpenAccountSwitcher}
-                      className="px-3 py-1.5 rounded-xl bg-rose-500 text-white font-bold text-xs shadow-sm hover:bg-rose-600"
+                      className="px-3 py-1.5 rounded-xl bg-rose-500 text-white font-bold text-xs shadow-sm hover:bg-rose-600 transition-colors"
                     >
                       Trocar Perfil
                     </button>
                   </>
                 ) : (
                   <>
+                    {/* Botão Seguir / Seguindo (funciona para outros perfis e entre perfis do mesmo dono!) */}
                     <button
                       onClick={() => {
                         store.toggleFollow(profile.id);
@@ -368,13 +390,13 @@ export const ProfileView: React.FC<Props> = ({
                       }}
                       className={`px-5 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all active:scale-95 ${
                         isFollowing
-                          ? 'bg-neutral-200 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200'
+                          ? 'bg-neutral-200 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-300 dark:hover:bg-neutral-700'
                           : 'bg-rose-500 text-white hover:bg-rose-600'
                       }`}
                     >
                       {isFollowing ? (
                         <>
-                          <UserCheck className="w-4 h-4" /> Seguindo
+                          <UserCheck className="w-4 h-4 text-emerald-500" /> Seguindo
                         </>
                       ) : (
                         <>
@@ -383,14 +405,42 @@ export const ProfileView: React.FC<Props> = ({
                       )}
                     </button>
 
-                    <button
-                      onClick={() => setReportModalOpen(true)}
-                      className="px-3 py-1.5 rounded-xl border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:text-red-500 hover:border-red-300 dark:hover:border-red-800 font-bold text-xs flex items-center gap-1.5 transition-colors"
-                      title="Denunciar este perfil ao administrador"
-                    >
-                      <Flag className="w-3.5 h-3.5" />
-                      <span>Denunciar</span>
-                    </button>
+                    {/* Botão Mensagem */}
+                    {onOpenDirect && (
+                      <button
+                        onClick={handleStartDirectChat}
+                        className="px-3.5 py-1.5 rounded-xl border border-neutral-300 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 font-bold text-xs flex items-center gap-1.5 transition-colors"
+                        title="Enviar mensagem direta"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                        <span>Mensagem</span>
+                      </button>
+                    )}
+
+                    {/* Se for outro perfil da mesma conta, permite alternar rapidamente */}
+                    {isMyOtherProfile ? (
+                      <button
+                        onClick={() => {
+                          store.switchProfile(profile.id);
+                          onOpenProfile(profile.id);
+                          setTick((t) => t + 1);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700 font-bold text-xs flex items-center gap-1.5 transition-colors"
+                        title="Alternar para este perfil"
+                      >
+                        <Repeat className="w-3.5 h-3.5 text-rose-500" />
+                        <span>Usar Perfil</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setReportModalOpen(true)}
+                        className="px-3 py-1.5 rounded-xl border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:text-red-500 hover:border-red-300 dark:hover:border-red-800 font-bold text-xs flex items-center gap-1.5 transition-colors"
+                        title="Denunciar este perfil ao administrador"
+                      >
+                        <Flag className="w-3.5 h-3.5" />
+                        <span>Denunciar</span>
+                      </button>
+                    )}
                   </>
                 )}
               </div>
