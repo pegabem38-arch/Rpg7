@@ -222,7 +222,7 @@ export const ReelsView: React.FC<Props> = ({ onOpenProfile }) => {
       {/* Comments Drawer Modal for Reels */}
       <CommentsDrawer
         postId={activeReel.id}
-        comments={[]}
+        comments={store.getComments(activeReel.id)}
         isOpen={!!activeCommentsReelId}
         onClose={() => setActiveCommentsReelId(null)}
         onOpenProfile={onOpenProfile}

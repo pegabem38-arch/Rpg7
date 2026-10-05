@@ -499,7 +499,7 @@ export const FeedPost: React.FC<Props> = ({ post, onOpenProfile }) => {
       {/* Comments Drawer Modal */}
       <CommentsDrawer
         postId={post.id}
-        comments={post.comments || []}
+        comments={(post.comments && post.comments.length > 0) ? post.comments : store.getComments(post.id)}
         isOpen={showComments}
         onClose={() => setShowComments(false)}
         onOpenProfile={onOpenProfile}

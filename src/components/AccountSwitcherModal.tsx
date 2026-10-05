@@ -25,6 +25,7 @@ import {
   ADMIN_EMAIL 
 } from '../services/googleAuth';
 import { GoogleLogo } from './GoogleSignInModal';
+import { compressImage } from '../utils/imageCompressor';
 
 interface Props {
   isOpen: boolean;
@@ -67,16 +68,21 @@ export const AccountSwitcherModal: React.FC<Props> = ({
 
   if (!isOpen) return null;
 
-  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setAvatarUrl(event.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressed = await compressImage(file, 400, 400, 0.8);
+        setAvatarUrl(compressed);
+      } catch {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (event.target?.result) {
+            setAvatarUrl(event.target.result as string);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 

@@ -7,7 +7,7 @@ import {
   INITIAL_CHATS, INITIAL_NOTIFICATIONS
 } from './mockData';
 import { getSupabaseClient } from '../lib/supabase';
-import { getStoredGoogleUser, ADMIN_EMAIL, isAppAdmin, GoogleUser, getOrCreateUserIdForEmail } from './googleAuth';
+import { getStoredGoogleUser, ADMIN_EMAIL, isAppAdmin, GoogleUser, getOrCreateUserIdForEmail, getDeterministicUserId } from './googleAuth';
 import { compressImage, convertToPermanentDataUrl } from '../utils/imageCompressor';
 import { imageCache } from './imageCache';
 import { safeStorage } from './safeStorage';
@@ -105,71 +105,133 @@ function getInitialState(): StoreState {
     const currentGoogleUser = getStoredGoogleUser();
     const currentUid = currentGoogleUser?.google_id;
     const currentEmail = currentGoogleUser?.email?.toLowerCase();
+    const deterministicUid = currentEmail ? getOrCreateUserIdForEmail(currentEmail) : undefined;
 
-    // Filtra perfis em state.profiles para garantir que apenas os do usuário autenticado sejam mantidos
-    if (currentGoogleUser && state.profiles.length > 0) {
-      state.profiles = state.profiles.filter((p) => {
-        if (!p) return false;
-        const matchesUid = Boolean(currentUid && p.user_id && p.user_id === currentUid);
-        const matchesEmail = Boolean(currentEmail && p.google_email && p.google_email.toLowerCase() === currentEmail);
-        return matchesUid || matchesEmail;
-      });
-    } else if (!currentGoogleUser) {
-      state.profiles = [];
-      state.activeProfileId = '';
-    }
-
-    // Carrega backup dedicado exclusivamente para a conta autenticada
-    if (currentGoogleUser) {
-      const userKey = currentUid || currentEmail;
-      const userSaved = safeStorage.getItem('rpg_profiles_' + userKey);
-      if (userSaved) {
-        const parsedProfiles = JSON.parse(userSaved);
-        if (Array.isArray(parsedProfiles) && parsedProfiles.length > 0) {
+    // 1. Carrega banco persistente de todos os perfis criados no dispositivo
+    const allCreatedRaw = safeStorage.getItem('rpg_all_created_profiles_v3');
+    if (allCreatedRaw) {
+      try {
+        const parsedAll = JSON.parse(allCreatedRaw);
+        if (Array.isArray(parsedAll) && parsedAll.length > 0) {
           const existingIds = new Set(state.profiles.map((p) => p.id));
-          for (const p of parsedProfiles) {
-            if (!existingIds.has(p.id)) {
+          for (const p of parsedAll) {
+            if (p && p.id && !existingIds.has(p.id)) {
               state.profiles.push(p);
               existingIds.add(p.id);
             }
           }
         }
-      }
+      } catch {}
     }
-  } catch (e) {}
 
-  try {
-    const savedFollowers = safeStorage.getItem('rpg_followers_v2');
-    if (savedFollowers) {
-      const parsedFollowers = JSON.parse(savedFollowers);
-      if (Array.isArray(parsedFollowers) && parsedFollowers.length > 0) {
-        state.followers = parsedFollowers;
+    // 2. Carrega backup dedicado exclusivamente para a conta autenticada
+    if (currentGoogleUser) {
+      const userKey = currentUid || currentEmail;
+      const userSaved = (currentEmail && safeStorage.getItem('rpg_profiles_' + currentEmail)) ||
+                        (userKey && safeStorage.getItem('rpg_profiles_' + userKey)) ||
+                        safeStorage.getItem('rpg_profiles_v2');
+      if (userSaved) {
+        try {
+          const parsedProfiles = JSON.parse(userSaved);
+          if (Array.isArray(parsedProfiles) && parsedProfiles.length > 0) {
+            const existingIds = new Set(state.profiles.map((p) => p.id));
+            for (const p of parsedProfiles) {
+              if (p && p.id && !existingIds.has(p.id)) {
+                state.profiles.push(p);
+                existingIds.add(p.id);
+              }
+            }
+          }
+        } catch {}
       }
     }
-  } catch (e) {}
 
-  try {
-    const savedReports = safeStorage.getItem('rpg_reports_v2');
-    if (savedReports) {
-      const parsedReports = JSON.parse(savedReports);
-      if (Array.isArray(parsedReports)) {
-        state.reports = parsedReports;
-      }
+    // 3. Garante que perfis tenham associação ao usuário autenticado
+    if (currentGoogleUser && state.profiles.length > 0) {
+      state.profiles = state.profiles.map((p) => {
+        if (!p.user_id && deterministicUid) p.user_id = deterministicUid;
+        if (!p.google_email && currentEmail) p.google_email = currentEmail;
+        if (!p.google_name && currentGoogleUser.name) p.google_name = currentGoogleUser.name;
+        return p;
+      });
     }
+
+    // 4. Valida e restaura o perfil ativo persistido para recarregar exatamente no mesmo perfil
+    const savedActiveId = (currentEmail && safeStorage.getItem('rpg_active_profile_id_' + currentEmail)) ||
+                          safeStorage.getItem('rpg_active_profile_id_global') ||
+                          state.activeProfileId;
+
+    if (savedActiveId && state.profiles.some((p) => p.id === savedActiveId)) {
+      state.activeProfileId = savedActiveId;
+    } else if (state.profiles.length > 0) {
+      const myProf = state.profiles.find((p) => (currentEmail && p.google_email?.toLowerCase() === currentEmail) || (deterministicUid && p.user_id === deterministicUid));
+      state.activeProfileId = myProf ? myProf.id : state.profiles[state.profiles.length - 1].id;
+    } else {
+      state.activeProfileId = '';
+    }
+
+    // 5. Re-hidrata comentários e curtidas persistentes em todos os posts e reels
+    try {
+      const rawComments = safeStorage.getItem('rpg_comments_registry_v1');
+      const commentsMap: Record<string, Comment[]> = rawComments ? JSON.parse(rawComments) : {};
+
+      const rawLikes = safeStorage.getItem('rpg_likes_registry_v1');
+      const likedSet = new Set<string>(rawLikes ? JSON.parse(rawLikes) : []);
+
+      const rawLikesCounts = safeStorage.getItem('rpg_likes_counts_v1');
+      const likesCountsMap: Record<string, number> = rawLikesCounts ? JSON.parse(rawLikesCounts) : {};
+
+      for (const post of state.posts) {
+        if (!post) continue;
+        if (!Array.isArray(post.comments)) post.comments = [];
+
+        const persistentComments = commentsMap[post.id];
+        if (Array.isArray(persistentComments) && persistentComments.length > 0) {
+          const existingCommentIds = new Set(post.comments.map((c) => c.id));
+          for (const c of persistentComments) {
+            if (c && c.id && !existingCommentIds.has(c.id)) {
+              if (c.profile_id) {
+                const author = state.profiles.find((p) => p.id === c.profile_id);
+                if (author) {
+                  c.profile = {
+                    ...author,
+                    ...(c.profile || {}),
+                    avatar_url: (c.profile?.avatar_url && c.profile.avatar_url.trim()) || author.avatar_url
+                  };
+                }
+              }
+              post.comments.push(c);
+              existingCommentIds.add(c.id);
+            }
+          }
+        }
+        post.comments_count = Math.max(post.comments.length, post.comments_count || 0);
+
+        if (likesCountsMap[post.id] !== undefined) {
+          post.likes_count = likesCountsMap[post.id];
+        }
+
+        const isLikedByActive = Boolean(state.activeProfileId && likedSet.has(`${state.activeProfileId}_liked_${post.id}`));
+        const isLikedByEmail = Boolean(currentEmail && likedSet.has(`${currentEmail}_liked_${post.id}`));
+        const isLikedByDefault = likedSet.has(`default_liked_${post.id}`);
+        post.is_liked = isLikedByActive || isLikedByEmail || isLikedByDefault || Boolean(post.is_liked);
+      }
+
+      for (const reel of state.reels) {
+        if (!reel) continue;
+        if (likesCountsMap[reel.id] !== undefined) {
+          reel.likes_count = likesCountsMap[reel.id];
+        }
+        const isLikedByActive = Boolean(state.activeProfileId && likedSet.has(`${state.activeProfileId}_liked_${reel.id}`));
+        const isLikedByEmail = Boolean(currentEmail && likedSet.has(`${currentEmail}_liked_${reel.id}`));
+        const isLikedByDefault = likedSet.has(`default_liked_${reel.id}`);
+        reel.is_liked = isLikedByActive || isLikedByEmail || isLikedByDefault || Boolean(reel.is_liked);
+      }
+    } catch (err) {}
   } catch (e) {}
 
   if (!Array.isArray(state.reports)) {
     state.reports = [];
-  }
-
-  // Valida que o activeProfileId pertence a um perfil desta conta
-  if (state.profiles.length > 0) {
-    const activeBelongs = state.profiles.some((p) => p.id === state.activeProfileId);
-    if (!activeBelongs) {
-      state.activeProfileId = state.profiles[0].id;
-    }
-  } else {
-    state.activeProfileId = '';
   }
 
   if (!Array.isArray(state.communities)) {
@@ -213,17 +275,76 @@ class Store {
     try {
       const currentGoogleUser = getStoredGoogleUser();
       const myProfs = this.getProfiles();
-      if (currentGoogleUser && myProfs.length > 0) {
-        const userKey = currentGoogleUser.google_id || currentGoogleUser.email.toLowerCase();
+      const allProfs = this.state.profiles || [];
+
+      // 1. Salva catálogo global de perfis criados no dispositivo
+      if (allProfs.length > 0) {
         try {
-          safeStorage.setItem('rpg_profiles_' + userKey, JSON.stringify(myProfs));
+          safeStorage.setItem('rpg_all_created_profiles_v3', JSON.stringify(allProfs));
         } catch {}
       }
+
+      // 2. Salva perfis da conta Google ativa
+      if (currentGoogleUser && myProfs.length > 0) {
+        const userKey = currentGoogleUser.google_id || currentGoogleUser.email.toLowerCase();
+        const cleanEmail = currentGoogleUser.email.toLowerCase();
+        try {
+          safeStorage.setItem('rpg_profiles_' + userKey, JSON.stringify(myProfs));
+          safeStorage.setItem('rpg_profiles_' + cleanEmail, JSON.stringify(myProfs));
+          safeStorage.setItem('rpg_profiles_v2', JSON.stringify(myProfs));
+        } catch {}
+      }
+
+      // 3. Salva id do perfil ativo para persistência imediata após reload
+      if (this.state.activeProfileId) {
+        if (currentGoogleUser?.email) {
+          safeStorage.setItem('rpg_active_profile_id_' + currentGoogleUser.email.toLowerCase(), this.state.activeProfileId);
+        }
+        safeStorage.setItem('rpg_active_profile_id_global', this.state.activeProfileId);
+      }
+
+      // 4. Salva catálogo consolidado de comentários de todos os posts
+      try {
+        const commentsMap = this.getPersistentCommentsMap();
+        for (const p of this.state.posts || []) {
+          if (p && p.id && Array.isArray(p.comments) && p.comments.length > 0) {
+            commentsMap[p.id] = p.comments;
+          }
+        }
+        safeStorage.setItem('rpg_comments_registry_v1', JSON.stringify(commentsMap));
+      } catch {}
+
+      // 5. Salva catálogo consolidado de curtidas e contadores
+      try {
+        const likedSet = this.getPersistentLikesSet();
+        const countsMap = this.getPersistentLikesCountsMap();
+        for (const p of this.state.posts || []) {
+          if (p && p.id) {
+            countsMap[p.id] = p.likes_count || 0;
+            if (p.is_liked) {
+              if (this.state.activeProfileId) likedSet.add(`${this.state.activeProfileId}_liked_${p.id}`);
+              if (currentGoogleUser?.email) likedSet.add(`${currentGoogleUser.email.toLowerCase()}_liked_${p.id}`);
+              likedSet.add(`default_liked_${p.id}`);
+            }
+          }
+        }
+        for (const r of this.state.reels || []) {
+          if (r && r.id) {
+            countsMap[r.id] = r.likes_count || 0;
+            if (r.is_liked) {
+              if (this.state.activeProfileId) likedSet.add(`${this.state.activeProfileId}_liked_${r.id}`);
+              if (currentGoogleUser?.email) likedSet.add(`${currentGoogleUser.email.toLowerCase()}_liked_${r.id}`);
+              likedSet.add(`default_liked_${r.id}`);
+            }
+          }
+        }
+        safeStorage.setItem('rpg_likes_registry_v1', JSON.stringify(Array.from(likedSet)));
+        safeStorage.setItem('rpg_likes_counts_v1', JSON.stringify(countsMap));
+      } catch {}
 
       try {
         safeStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(this.state));
         safeStorage.setItem('rpg_posts_v2', JSON.stringify((this.state.posts || []).slice(0, 50)));
-        safeStorage.setItem('rpg_profiles_v2', JSON.stringify(myProfs));
         safeStorage.setItem('rpg_followers_v2', JSON.stringify(this.state.followers || []));
         safeStorage.setItem('rpg_reports_v2', JSON.stringify(this.state.reports || []));
       } catch (e) {
@@ -323,6 +444,51 @@ class Store {
 
   // --- SUPABASE REALTIME SYNC & BACKGROUND SYNC ---
   private setupSupabaseRealtime() {
+    // Restaura perfis, comentários e curtidas persistidos no IndexedDB
+    safeStorage.restoreFromIndexedDB().then((restored) => {
+      let shouldNotify = false;
+      if (restored['rpg_all_created_profiles_v3']) {
+        try {
+          const parsed = JSON.parse(restored['rpg_all_created_profiles_v3']);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const existingIds = new Set(this.state.profiles.map((p) => p.id));
+            for (const p of parsed) {
+              if (p && p.id && !existingIds.has(p.id)) {
+                this.state.profiles.push(p);
+                existingIds.add(p.id);
+                shouldNotify = true;
+              }
+            }
+          }
+        } catch {}
+      }
+
+      if (restored['rpg_comments_registry_v1']) {
+        try {
+          const commentsMap: Record<string, Comment[]> = JSON.parse(restored['rpg_comments_registry_v1']);
+          for (const post of this.state.posts) {
+            const extra = commentsMap[post.id];
+            if (Array.isArray(extra) && extra.length > 0) {
+              if (!Array.isArray(post.comments)) post.comments = [];
+              const seen = new Set(post.comments.map((c) => c.id));
+              for (const c of extra) {
+                if (c && c.id && !seen.has(c.id)) {
+                  post.comments.push(c);
+                  seen.add(c.id);
+                  shouldNotify = true;
+                }
+              }
+              post.comments_count = Math.max(post.comments.length, post.comments_count || 0);
+            }
+          }
+        } catch {}
+      }
+
+      if (shouldNotify) {
+        this.notify();
+      }
+    }).catch(() => {});
+
     const supabase = getSupabaseClient();
     if (!supabase) {
       this.isSqlSyncing = false;
@@ -430,25 +596,16 @@ class Store {
       // 1. Consulta ao Supabase filtrada estritamente no backend pelo ID do usuário autenticado
       const currentGoogleUser = getStoredGoogleUser();
       if (currentGoogleUser) {
-        const currentUid = currentGoogleUser.google_id;
         const currentEmail = currentGoogleUser.email?.toLowerCase();
+        const deterministicUid = getDeterministicUserId(currentGoogleUser, currentEmail);
 
         let myRemoteProfiles: any[] | null = null;
         let profErr: any = null;
 
-        if (currentUid && isValidUUID(currentUid)) {
-          const res = await supabase.from('profiles').select('*').eq('user_id', currentUid);
+        if (deterministicUid) {
+          const res = await supabase.from('profiles').select('*').eq('user_id', deterministicUid);
           myRemoteProfiles = res.data;
           profErr = res.error;
-        }
-
-        if ((!myRemoteProfiles || myRemoteProfiles.length === 0) && currentEmail) {
-          try {
-            const res = await supabase.from('profiles').select('*').eq('google_email', currentEmail);
-            if (!res.error && res.data && res.data.length > 0) {
-              myRemoteProfiles = res.data;
-            }
-          } catch {}
         }
 
         if (!profErr && myRemoteProfiles && myRemoteProfiles.length > 0) {
@@ -456,24 +613,46 @@ class Store {
           myRemoteProfiles.forEach((rp: any) => {
             const existingIdx = this.state.profiles.findIndex((p) => p.id === rp.id);
             if (existingIdx === -1) {
-              this.state.profiles.push(rp);
+              this.state.profiles.push({
+                ...rp,
+                user_id: rp.user_id || deterministicUid,
+                google_email: currentEmail,
+                google_name: currentGoogleUser.name
+              });
               changed = true;
             } else {
+              const existing = this.state.profiles[existingIdx];
               this.state.profiles[existingIdx] = {
-                ...this.state.profiles[existingIdx],
-                ...rp
+                ...existing,
+                ...rp,
+                user_id: rp.user_id || existing.user_id || deterministicUid,
+                google_email: existing.google_email || currentEmail,
+                google_name: existing.google_name || currentGoogleUser.name,
+                avatar_url: rp.avatar_url || existing.avatar_url
               };
               changed = true;
             }
           });
+
           if (changed) {
             const myProfs = this.getProfiles();
-            if (!this.state.activeProfileId && myProfs.length > 0) {
-              this.state.activeProfileId = myProfs[0].id;
+            const savedActiveId = (currentEmail && safeStorage.getItem('rpg_active_profile_id_' + currentEmail)) ||
+                                  safeStorage.getItem('rpg_active_profile_id_global');
+            if (savedActiveId && myProfs.some((p) => p.id === savedActiveId)) {
+              this.state.activeProfileId = savedActiveId;
+            } else if (!this.state.activeProfileId && myProfs.length > 0) {
+              this.state.activeProfileId = myProfs[myProfs.length - 1].id;
             }
             this.saveState();
           }
           imageCache.cacheProfiles(myRemoteProfiles);
+        }
+
+        // Envia perfis locais do usuário que ainda não constam no Supabase
+        for (const localProf of this.getProfiles()) {
+          if (!myRemoteProfiles || !myRemoteProfiles.some((rp: any) => rp.id === localProf.id)) {
+            this.saveProfileToSupabase(localProf);
+          }
         }
       }
 
@@ -531,6 +710,42 @@ class Store {
             verified: false
           };
 
+          const existingPost = existingIdx !== -1 ? this.state.posts[existingIdx] : undefined;
+          const commentsFromRegistry = this.getComments(rp.id);
+          const existingComments = existingPost?.comments || [];
+          const mergedComments: Comment[] = [...existingComments];
+          const commentIds = new Set(mergedComments.map((c) => c.id));
+          for (const c of commentsFromRegistry) {
+            if (c && c.id && !commentIds.has(c.id)) {
+              mergedComments.push(c);
+              commentIds.add(c.id);
+            }
+          }
+
+          const persistentLikedSet = this.getPersistentLikesSet();
+          const persistentLikesCountsMap = this.getPersistentLikesCountsMap();
+
+          const isLiked = this.state.activeProfileId
+            ? persistentLikedSet.has(`${this.state.activeProfileId}_liked_${rp.id}`) ||
+              (currentEmail ? persistentLikedSet.has(`${currentEmail}_liked_${rp.id}`) : false) ||
+              persistentLikedSet.has(`default_liked_${rp.id}`) ||
+              Boolean(existingPost?.is_liked)
+            : Boolean(existingPost?.is_liked);
+
+          const finalLikesCount = persistentLikesCountsMap[rp.id] !== undefined
+            ? persistentLikesCountsMap[rp.id]
+            : Math.max(
+                rp.likes_count || 0,
+                existingPost?.likes_count || 0,
+                isLiked ? 1 : 0
+              );
+
+          const finalCommentsCount = Math.max(
+            rp.comments_count || 0,
+            existingPost?.comments_count || 0,
+            mergedComments.length
+          );
+
           const mappedPost: Post = {
             id: rp.id,
             profile_id: rp.profile_id,
@@ -551,12 +766,12 @@ class Store {
               }
               return track;
             })(),
-            likes_count: rp.likes_count || 0,
-            comments_count: rp.comments_count || 0,
-            is_liked: false,
+            likes_count: finalLikesCount,
+            comments_count: finalCommentsCount,
+            is_liked: isLiked,
             is_saved: (this.state.savedPostIds || []).includes(rp.id),
             created_at: rp.created_at || new Date().toISOString(),
-            comments: []
+            comments: mergedComments
           };
 
           if (existingIdx === -1) {
@@ -564,11 +779,12 @@ class Store {
             postChanged = true;
           } else {
             const currentPost = this.state.posts[existingIdx];
-            if (currentPost.profile_id !== rp.profile_id) {
+            currentPost.comments = mergedComments;
+            currentPost.comments_count = finalCommentsCount;
+            currentPost.likes_count = finalLikesCount;
+            currentPost.is_liked = isLiked;
+            if (currentPost.profile_id !== rp.profile_id || !currentPost.profile) {
               currentPost.profile_id = rp.profile_id;
-              currentPost.profile = author;
-              postChanged = true;
-            } else if (!currentPost.profile || currentPost.profile.id !== rp.profile_id) {
               currentPost.profile = author;
               postChanged = true;
             }
@@ -642,10 +858,21 @@ class Store {
         profile.id = generateUUID();
       }
 
-      // 2. Upsert do perfil utilizando o ID único do perfil
+      // 2. Upsert do perfil utilizando as colunas do banco de dados
+      const currentGoogleUser = getStoredGoogleUser();
+      const cleanEmail = (profile.google_email || currentGoogleUser?.email || '').trim().toLowerCase();
+      const finalUserId = (profile.user_id && isValidUUID(profile.user_id))
+        ? profile.user_id
+        : getDeterministicUserId(currentGoogleUser, cleanEmail);
+
+      profile.user_id = finalUserId;
+      if (cleanEmail && !profile.google_email) {
+        profile.google_email = cleanEmail;
+      }
+
       const payload: Record<string, any> = {
         id: profile.id,
-        user_id: profile.user_id,
+        user_id: finalUserId || null,
         username: profile.username.toLowerCase(),
         full_name: profile.full_name,
         avatar_url: profile.avatar_url,
@@ -658,18 +885,8 @@ class Store {
         posts_count: profile.posts_count || 0,
         created_at: profile.created_at || new Date().toISOString()
       };
-      if (profile.google_email) payload.google_email = profile.google_email;
-      if (profile.google_name) payload.google_name = profile.google_name;
 
-      let { error } = await supabase.from('profiles').upsert(payload);
-      if (error && (error as any).code === 'PGRST204') {
-        // Schema cache não possui google_email/google_name, salva com colunas essenciais
-        delete payload.google_email;
-        delete payload.google_name;
-        const retry = await supabase.from('profiles').upsert(payload);
-        error = retry.error;
-      }
-
+      const { error } = await supabase.from('profiles').upsert(payload);
       if (error) {
         console.warn('Aviso ao sincronizar perfil no Supabase:', error);
       }
@@ -728,32 +945,119 @@ class Store {
    */
   public getProfiles(): Profile[] {
     const currentGoogleUser = getStoredGoogleUser();
-    if (!currentGoogleUser) return [];
+    if (!currentGoogleUser) return this.state.profiles || [];
 
     const currentUid = currentGoogleUser.google_id;
     const currentEmail = currentGoogleUser.email?.toLowerCase();
+    const deterministicUid = currentEmail ? getOrCreateUserIdForEmail(currentEmail) : undefined;
 
-    return (this.state.profiles || []).filter((p) => {
+    const myProfs = (this.state.profiles || []).filter((p) => {
       if (!p) return false;
-      // Perfil deve pertencer estritamente a este usuário (UID ou e-mail)
+      const matchesDeterministicUid = Boolean(deterministicUid && p.user_id && p.user_id === deterministicUid);
       const matchesUid = Boolean(currentUid && p.user_id && p.user_id === currentUid);
       const matchesEmail = Boolean(currentEmail && p.google_email && p.google_email.toLowerCase() === currentEmail);
-      
-      // Dados antigos ou sem dono NÃO são expostos a usuários comuns
-      return matchesUid || matchesEmail;
+      const isCurrentActive = Boolean(this.state.activeProfileId && p.id === this.state.activeProfileId);
+
+      return matchesDeterministicUid || matchesUid || matchesEmail || isCurrentActive;
     });
+
+    // Se houver perfis no estado mas nenhum com tag explícita, associa e preserva
+    if (myProfs.length === 0 && (this.state.profiles || []).length > 0) {
+      return this.state.profiles.map((p) => {
+        if (!p.user_id && deterministicUid) p.user_id = deterministicUid;
+        if (!p.google_email && currentEmail) p.google_email = currentEmail;
+        return p;
+      });
+    }
+
+    return myProfs;
   }
 
   public getActiveProfile(): Profile | undefined {
     const myProfiles = this.getProfiles();
     if (myProfiles.length === 0) return undefined;
 
-    // Se o activeProfileId atual pertence ao usuário autenticado, usa ele
+    // 1. Se o activeProfileId atual estiver em myProfiles, usa ele
     const active = myProfiles.find((p) => p.id === this.state.activeProfileId);
     if (active) return active;
 
-    // Fallback seguro: primeiro perfil DO PRÓPRIO USUÁRIO
-    return myProfiles[0];
+    // 2. Busca último ID persistido em safeStorage
+    const currentGoogleUser = getStoredGoogleUser();
+    const cleanEmail = currentGoogleUser?.email?.toLowerCase();
+    const savedActiveId = (cleanEmail && safeStorage.getItem('rpg_active_profile_id_' + cleanEmail)) ||
+                          safeStorage.getItem('rpg_active_profile_id_global');
+
+    if (savedActiveId) {
+      const savedActive = myProfiles.find((p) => p.id === savedActiveId);
+      if (savedActive) {
+        this.state.activeProfileId = savedActive.id;
+        return savedActive;
+      }
+    }
+
+    // 3. Fallback seguro: último perfil criado ou primeiro
+    const fallback = myProfiles[myProfiles.length - 1] || myProfiles[0];
+    if (fallback) {
+      this.state.activeProfileId = fallback.id;
+    }
+    return fallback;
+  }
+
+  public getPersistentCommentsMap(): Record<string, Comment[]> {
+    try {
+      const raw = safeStorage.getItem('rpg_comments_registry_v1');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return {};
+  }
+
+  public getPersistentLikesSet(): Set<string> {
+    try {
+      const raw = safeStorage.getItem('rpg_likes_registry_v1');
+      if (raw) return new Set(JSON.parse(raw));
+    } catch {}
+    return new Set();
+  }
+
+  public getPersistentLikesCountsMap(): Record<string, number> {
+    try {
+      const raw = safeStorage.getItem('rpg_likes_counts_v1');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return {};
+  }
+
+  public getComments(targetId: string): Comment[] {
+    const post = (this.state.posts || []).find((p) => p && p.id === targetId);
+    const map = this.getPersistentCommentsMap();
+    const storedComments = map[targetId] || [];
+
+    const existingComments = (post && Array.isArray(post.comments)) ? post.comments : [];
+    const merged = [...existingComments];
+    const seenIds = new Set(merged.map((c) => c.id));
+
+    for (const c of storedComments) {
+      if (c && c.id && !seenIds.has(c.id)) {
+        merged.push(c);
+        seenIds.add(c.id);
+      }
+    }
+
+    // Rehydrate author profile if missing avatar or info
+    for (const c of merged) {
+      if (c && c.profile_id) {
+        const fullProf = this.getProfileById(c.profile_id);
+        if (fullProf) {
+          c.profile = {
+            ...fullProf,
+            ...(c.profile || {}),
+            avatar_url: (c.profile?.avatar_url && c.profile.avatar_url.trim()) || fullProf.avatar_url
+          };
+        }
+      }
+    }
+
+    return merged;
   }
 
   public switchProfile(profileId: string): boolean {
@@ -761,6 +1065,22 @@ class Store {
     const target = myProfiles.find((p) => p.id === profileId);
     if (target) {
       this.state.activeProfileId = target.id;
+      const currentGoogleUser = getStoredGoogleUser();
+      const cleanEmail = currentGoogleUser?.email?.trim().toLowerCase();
+      if (cleanEmail) {
+        safeStorage.setItem('rpg_active_profile_id_' + cleanEmail, target.id);
+      }
+      safeStorage.setItem('rpg_active_profile_id_global', target.id);
+
+      // Atualiza o estado is_liked dos posts e reels para o novo perfil
+      const likedSet = this.getPersistentLikesSet();
+      for (const p of this.state.posts || []) {
+        p.is_liked = likedSet.has(`${target.id}_liked_${p.id}`);
+      }
+      for (const r of this.state.reels || []) {
+        r.is_liked = likedSet.has(`${target.id}_liked_${r.id}`);
+      }
+
       this.saveState();
       return true;
     }
@@ -781,7 +1101,9 @@ class Store {
   }): Profile {
     const currentGoogleUser = getStoredGoogleUser();
     const cleanEmail = (data.google_email || currentGoogleUser?.email || '').trim().toLowerCase();
-    const finalUserId = data.user_id || currentGoogleUser?.google_id || (cleanEmail ? getOrCreateUserIdForEmail(cleanEmail) : generateUUID());
+    const finalUserId = (data.user_id && isValidUUID(data.user_id))
+      ? data.user_id
+      : getDeterministicUserId(currentGoogleUser, cleanEmail);
     const finalGoogleName = data.google_name || currentGoogleUser?.name;
 
     const newProfile: Profile = {
@@ -802,10 +1124,33 @@ class Store {
       created_at: new Date().toISOString()
     };
 
+    // 1. Registra no estado local e define como ativo
     this.state.profiles.push(newProfile);
-    this.state.activeProfileId = newProfile.id; // Alterna automaticamente para o perfil recém-criado
+    this.state.activeProfileId = newProfile.id;
+
+    // 2. Salva explicitamente no registro permanente de todos os perfis criados
+    try {
+      const allRaw = safeStorage.getItem('rpg_all_created_profiles_v3');
+      const allParsed: Profile[] = allRaw ? JSON.parse(allRaw) : [];
+      if (!allParsed.some((p) => p.id === newProfile.id)) {
+        allParsed.push(newProfile);
+      }
+      safeStorage.setItem('rpg_all_created_profiles_v3', JSON.stringify(allParsed));
+    } catch {}
+
+    // 3. Salva activeProfileId para que recarregamentos sempre abram neste perfil
+    if (cleanEmail) {
+      safeStorage.setItem('rpg_active_profile_id_' + cleanEmail, newProfile.id);
+      safeStorage.setItem('rpg_profiles_' + cleanEmail, JSON.stringify(this.getProfiles()));
+    }
+    safeStorage.setItem('rpg_active_profile_id_global', newProfile.id);
+
+    // 4. Salva estado e persiste no banco de dados Supabase
     this.saveState();
-    this.saveProfileToSupabase(newProfile);
+    this.saveProfileToSupabase(newProfile).catch((err) => {
+      console.warn('Erro ao persistir novo perfil no Supabase:', err);
+    });
+    this.notify();
     return newProfile;
   }
 
@@ -843,17 +1188,17 @@ class Store {
 
   public async handleUserLogin(user: GoogleUser) {
     const cleanEmail = user.email.trim().toLowerCase();
-    const uid = user.google_id || getOrCreateUserIdForEmail(cleanEmail);
+    const uid = getDeterministicUserId(user, cleanEmail);
 
-    // 1. Carrega backup local salvo para este usuário específico
-    const userStorageKey = 'rpg_profiles_' + (uid || cleanEmail);
-    const userSaved = safeStorage.getItem(userStorageKey);
+    // 1. Carrega backup local salvo para este usuário específico e catálogo persistente
+    const userStorageKey = 'rpg_profiles_' + cleanEmail;
+    const userSaved = safeStorage.getItem(userStorageKey) || (user.google_id && safeStorage.getItem('rpg_profiles_' + user.google_id)) || safeStorage.getItem('rpg_profiles_v2');
     if (userSaved) {
       try {
         const parsed = JSON.parse(userSaved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           for (const cp of parsed) {
-            if (!this.state.profiles.some((p) => p.id === cp.id)) {
+            if (cp && cp.id && !this.state.profiles.some((p) => p.id === cp.id)) {
               this.state.profiles.push(cp);
             }
           }
@@ -861,10 +1206,31 @@ class Store {
       } catch {}
     }
 
-    // 2. Define o activeProfileId para um perfil pertencente a esta conta
+    try {
+      const allCreatedRaw = safeStorage.getItem('rpg_all_created_profiles_v3');
+      if (allCreatedRaw) {
+        const allCreated = JSON.parse(allCreatedRaw);
+        if (Array.isArray(allCreated)) {
+          for (const p of allCreated) {
+            if (p && p.id && !this.state.profiles.some((cp) => cp.id === p.id)) {
+              if (!p.google_email || p.google_email.toLowerCase() === cleanEmail || p.user_id === uid || p.user_id === user.google_id) {
+                this.state.profiles.push(p);
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // 2. Define o activeProfileId respeitando a última escolha do usuário
     const myProfiles = this.getProfiles();
-    if (myProfiles.length > 0) {
-      this.state.activeProfileId = myProfiles[0].id;
+    const savedActiveId = safeStorage.getItem('rpg_active_profile_id_' + cleanEmail) ||
+                          safeStorage.getItem('rpg_active_profile_id_global');
+
+    if (savedActiveId && myProfiles.some((p) => p.id === savedActiveId)) {
+      this.state.activeProfileId = savedActiveId;
+    } else if (myProfiles.length > 0) {
+      this.state.activeProfileId = myProfiles[myProfiles.length - 1].id;
     } else {
       this.state.activeProfileId = '';
     }
@@ -877,32 +1243,43 @@ class Store {
     if (supabase) {
       try {
         let remoteProfs: any[] | null = null;
-        if (uid && isValidUUID(uid)) {
+        if (uid) {
           const res = await supabase.from('profiles').select('*').eq('user_id', uid);
           remoteProfs = res.data;
-        }
-
-        if ((!remoteProfs || remoteProfs.length === 0) && cleanEmail) {
-          try {
-            const res = await supabase.from('profiles').select('*').eq('google_email', cleanEmail);
-            if (!res.error && res.data && res.data.length > 0) {
-              remoteProfs = res.data;
-            }
-          } catch {}
         }
 
         if (remoteProfs && remoteProfs.length > 0) {
           for (const rp of remoteProfs) {
             const idx = this.state.profiles.findIndex((p) => p.id === rp.id);
             if (idx === -1) {
-              this.state.profiles.push(rp);
+              this.state.profiles.push({
+                ...rp,
+                user_id: rp.user_id || uid,
+                google_email: cleanEmail,
+                google_name: user.name
+              });
             } else {
-              this.state.profiles[idx] = { ...this.state.profiles[idx], ...rp };
+              const existing = this.state.profiles[idx];
+              this.state.profiles[idx] = {
+                ...existing,
+                ...rp,
+                user_id: rp.user_id || existing.user_id || uid,
+                google_email: existing.google_email || cleanEmail,
+                google_name: existing.google_name || user.name
+              };
             }
           }
+
+          // Envia ao Supabase qualquer perfil local que ainda não esteja lá
+          for (const localProf of this.getProfiles()) {
+            if (!remoteProfs.some((rp: any) => rp.id === localProf.id)) {
+              this.saveProfileToSupabase(localProf);
+            }
+          }
+
           const updatedMyProfiles = this.getProfiles();
           if (updatedMyProfiles.length > 0 && !this.state.activeProfileId) {
-            this.state.activeProfileId = updatedMyProfiles[0].id;
+            this.state.activeProfileId = updatedMyProfiles[updatedMyProfiles.length - 1].id;
           }
           this.saveState();
           this.notify();
@@ -1868,18 +2245,55 @@ class Store {
     const post = this.state.posts.find((p) => p.id === postId);
     if (!post) return;
 
-    post.is_liked = !post.is_liked;
-    post.likes_count += post.is_liked ? 1 : -1;
+    const activeProfile = this.getActiveProfile();
+    const activeId = activeProfile?.id || this.state.activeProfileId || 'default';
+    const currentGoogleUser = getStoredGoogleUser();
+    const cleanEmail = currentGoogleUser?.email?.trim().toLowerCase();
 
-    if (post.is_liked && post.profile_id !== this.state.activeProfileId) {
-      this.addNotification({
-        recipient_profile_id: post.profile_id,
-        actor_profile: this.getActiveProfile(),
-        type: 'like',
-        content: 'curtiu a sua publicação.',
-        target_id: post.id,
-        target_media_url: post.media_url
-      });
+    const likeKey = `${activeId}_liked_${postId}`;
+    const emailLikeKey = cleanEmail ? `${cleanEmail}_liked_${postId}` : null;
+    const defaultLikeKey = `default_liked_${postId}`;
+
+    const likedSet = this.getPersistentLikesSet();
+    const isCurrentlyLiked = likedSet.has(likeKey) || (emailLikeKey && likedSet.has(emailLikeKey)) || Boolean(post.is_liked);
+
+    if (isCurrentlyLiked) {
+      likedSet.delete(likeKey);
+      if (emailLikeKey) likedSet.delete(emailLikeKey);
+      likedSet.delete(defaultLikeKey);
+      post.is_liked = false;
+      post.likes_count = Math.max(0, (post.likes_count || 1) - 1);
+    } else {
+      likedSet.add(likeKey);
+      if (emailLikeKey) likedSet.add(emailLikeKey);
+      likedSet.add(defaultLikeKey);
+      post.is_liked = true;
+      post.likes_count = (post.likes_count || 0) + 1;
+
+      if (post.profile_id !== activeId && activeProfile) {
+        this.addNotification({
+          recipient_profile_id: post.profile_id,
+          actor_profile: activeProfile,
+          type: 'like',
+          content: 'curtiu a sua publicação.',
+          target_id: post.id,
+          target_media_url: post.media_url
+        });
+      }
+    }
+
+    try {
+      safeStorage.setItem('rpg_likes_registry_v1', JSON.stringify(Array.from(likedSet)));
+      const countsMap = this.getPersistentLikesCountsMap();
+      countsMap[postId] = post.likes_count;
+      safeStorage.setItem('rpg_likes_counts_v1', JSON.stringify(countsMap));
+    } catch {}
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      Promise.resolve(
+        supabase.from('posts').update({ likes_count: post.likes_count }).eq('id', postId)
+      ).catch(() => {});
     }
 
     this.saveState();
@@ -2194,40 +2608,91 @@ class Store {
   }
 
   public addComment(postId: string, text: string) {
-    const post = this.state.posts.find((p) => p.id === postId);
-    if (!post || !text.trim()) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
 
-    const activeProfile = this.getActiveProfile();
-    const newComment = {
-      id: `c-${Date.now()}`,
+    const activeProfile = this.getActiveProfile() || this.state.profiles[0];
+    const post = this.state.posts.find((p) => p.id === postId);
+
+    const lightweightProfile: Profile = activeProfile ? {
+      id: activeProfile.id,
+      user_id: activeProfile.user_id,
+      username: activeProfile.username,
+      full_name: activeProfile.full_name,
+      avatar_url: (activeProfile.avatar_url && activeProfile.avatar_url.length > 500) ? '' : (activeProfile.avatar_url || ''),
+      bio: '',
+      profile_type: activeProfile.profile_type,
+      followers_count: 0,
+      following_count: 0,
+      posts_count: 0,
+      created_at: activeProfile.created_at,
+      verified: activeProfile.verified
+    } : {
+      id: 'unknown',
+      user_id: 'unknown',
+      username: 'usuario',
+      full_name: 'Usuário',
+      avatar_url: '',
+      bio: '',
+      profile_type: 'pessoal',
+      followers_count: 0,
+      following_count: 0,
+      posts_count: 0,
+      created_at: new Date().toISOString(),
+      verified: false
+    };
+
+    const newComment: Comment = {
+      id: `c-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       post_id: postId,
-      profile_id: activeProfile.id,
-      profile: activeProfile,
-      text: text.trim(),
+      profile_id: activeProfile?.id || 'unknown',
+      profile: lightweightProfile,
+      text: trimmed,
       created_at: new Date().toISOString(),
       likes_count: 0
     };
 
-    if (!post.comments) post.comments = [];
-    post.comments.push(newComment);
-    post.comments_count += 1;
+    if (post) {
+      if (!Array.isArray(post.comments)) post.comments = [];
+      post.comments.push(newComment);
+      post.comments_count = Math.max(post.comments.length, (post.comments_count || 0) + 1);
 
-    if (post.profile_id !== activeProfile.id) {
-      this.addNotification({
-        recipient_profile_id: post.profile_id,
-        actor_profile: activeProfile,
+      if (activeProfile && post.profile_id !== activeProfile.id) {
+        this.addNotification({
+          recipient_profile_id: post.profile_id,
+          actor_profile: activeProfile,
+          type: 'comment',
+          content: `comentou: "${trimmed.substring(0, 30)}..." na sua publicação.`,
+          target_id: post.id,
+          target_media_url: post.media_url
+        });
+      }
+
+      this.notifyMentions(trimmed, {
         type: 'comment',
-        content: `comentou: "${text.substring(0, 30)}..." na sua publicação.`,
-        target_id: post.id,
-        target_media_url: post.media_url
+        targetId: post.id,
+        mediaUrl: post.media_url
       });
+
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        Promise.resolve(
+          supabase.from('posts').update({ comments_count: post.comments_count }).eq('id', postId)
+        ).catch(() => {});
+      }
     }
 
-    this.notifyMentions(text, {
-      type: 'comment',
-      targetId: post.id,
-      mediaUrl: post.media_url
-    });
+    // Salva no registro permanente de comentários
+    try {
+      const commentsMap = this.getPersistentCommentsMap();
+      if (!commentsMap[postId]) commentsMap[postId] = [];
+      if (!commentsMap[postId].some((c) => c.id === newComment.id)) {
+        commentsMap[postId].push(newComment);
+      }
+      safeStorage.setItem('rpg_comments_registry_v1', JSON.stringify(commentsMap));
+    } catch (e) {
+      console.warn('Erro ao salvar comentário persistentemente:', e);
+    }
 
     this.saveState();
   }
@@ -2370,18 +2835,48 @@ class Store {
     const reel = this.state.reels.find((r) => r.id === reelId);
     if (!reel) return;
 
-    reel.is_liked = !reel.is_liked;
-    reel.likes_count += reel.is_liked ? 1 : -1;
+    const activeProfile = this.getActiveProfile();
+    const activeId = activeProfile?.id || this.state.activeProfileId || 'default';
+    const currentGoogleUser = getStoredGoogleUser();
+    const cleanEmail = currentGoogleUser?.email?.trim().toLowerCase();
 
-    if (reel.is_liked && reel.profile_id !== this.state.activeProfileId) {
-      this.addNotification({
-        recipient_profile_id: reel.profile_id,
-        actor_profile: this.getActiveProfile(),
-        type: 'like',
-        content: 'curtiu o seu Curta.',
-        target_id: reel.id
-      });
+    const likeKey = `${activeId}_liked_${reelId}`;
+    const emailLikeKey = cleanEmail ? `${cleanEmail}_liked_${reelId}` : null;
+    const defaultLikeKey = `default_liked_${reelId}`;
+
+    const likedSet = this.getPersistentLikesSet();
+    const isCurrentlyLiked = likedSet.has(likeKey) || (emailLikeKey && likedSet.has(emailLikeKey)) || Boolean(reel.is_liked);
+
+    if (isCurrentlyLiked) {
+      likedSet.delete(likeKey);
+      if (emailLikeKey) likedSet.delete(emailLikeKey);
+      likedSet.delete(defaultLikeKey);
+      reel.is_liked = false;
+      reel.likes_count = Math.max(0, (reel.likes_count || 1) - 1);
+    } else {
+      likedSet.add(likeKey);
+      if (emailLikeKey) likedSet.add(emailLikeKey);
+      likedSet.add(defaultLikeKey);
+      reel.is_liked = true;
+      reel.likes_count = (reel.likes_count || 0) + 1;
+
+      if (reel.profile_id !== activeId && activeProfile) {
+        this.addNotification({
+          recipient_profile_id: reel.profile_id,
+          actor_profile: activeProfile,
+          type: 'like',
+          content: 'curtiu o seu Curta.',
+          target_id: reel.id
+        });
+      }
     }
+
+    try {
+      safeStorage.setItem('rpg_likes_registry_v1', JSON.stringify(Array.from(likedSet)));
+      const countsMap = this.getPersistentLikesCountsMap();
+      countsMap[reelId] = reel.likes_count;
+      safeStorage.setItem('rpg_likes_counts_v1', JSON.stringify(countsMap));
+    } catch {}
 
     this.saveState();
   }

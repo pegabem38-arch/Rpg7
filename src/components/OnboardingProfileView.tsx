@@ -21,6 +21,7 @@ import {
   clearStoredGoogleUser 
 } from '../services/googleAuth';
 import { GoogleLogo } from './GoogleSignInModal';
+import { compressImage } from '../utils/imageCompressor';
 
 const AVATAR_PRESETS = [
   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80',
@@ -60,16 +61,21 @@ export const OnboardingProfileView: React.FC<OnboardingProfileViewProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setAvatarUrl(event.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressed = await compressImage(file, 400, 400, 0.8);
+        setAvatarUrl(compressed);
+      } catch {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (event.target?.result) {
+            setAvatarUrl(event.target.result as string);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 

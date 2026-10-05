@@ -59,6 +59,17 @@ export function getOrCreateUserIdForEmail(email: string): string {
   return uid;
 }
 
+export function getDeterministicUserId(user?: GoogleUser | null, emailFallback?: string): string {
+  if (user?.google_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(user.google_id)) {
+    return user.google_id;
+  }
+  const cleanEmail = (user?.email || emailFallback || '').trim().toLowerCase();
+  if (cleanEmail) {
+    return getOrCreateUserIdForEmail(cleanEmail);
+  }
+  return generateDeterministicUUID(user?.google_id || 'anonymous_user');
+}
+
 const STORAGE_KEY = 'rpg_google_session';
 
 type Listener = (user: GoogleUser | null) => void;
